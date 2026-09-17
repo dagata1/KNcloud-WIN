@@ -6,5 +6,9 @@ dist/
 /KNcloud-WIN.exe
 .workbuddy-ai/
 frontend/package.json.md5
-v2rayN-win11.exe
-wintun.dll
+
+# wintun.dll 会在运行时被释放到 exe 同目录（tapstack.go 的 loadWintunAPI）。
+# 只忽略这些运行时副本 —— 注意必须带 / 前缀锚定到仓库根，
+# 否则裸 "wintun.dll" 规则会连带忽略掉源文件 cores/wintun.dll（该文件需要入库）。
+/wintun.dll
+/build/bin/wintun.dll

@@ -1,4 +1,4 @@
-module v2rayN-win11
+module github.com/dagata1/KNcloud-WIN
 
 go 1.25.0
 
@@ -77,5 +77,3 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	lukechampine.com/blake3 v1.3.0 // indirect
 )
-
-// replace github.com/wailsapp/wails/v2 v2.15.0 => C:\Users\Admin\go\pkg\mod
