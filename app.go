@@ -30,6 +30,11 @@ type NodeItem struct {
 	Upload   string `json:"upload"`
 	Download string `json:"download"`
 
+	// Unsupported 为空表示可正常连接；非空则是「当前内核无法连接该节点」的中文原因。
+	// 由后端在返回节点列表时统一计算（见 markUnsupported），前端据此标灰并提示，
+	// 避免用户点了连接才撞上内核层报错。不参与持久化，每次都按当前内核能力重算。
+	Unsupported string `json:"unsupported,omitempty"`
+
 	// 扩展字段（用于真实内核配置生成）
 	SubID       string `json:"subId,omitempty"`
 	AlterID     int    `json:"alterId,omitempty"`
@@ -346,27 +351,53 @@ func (a *App) GetNodes() []NodeItem {
 	defer a.mu.RUnlock()
 	out := make([]NodeItem, len(a.nodes))
 	copy(out, a.nodes)
+	markUnsupported(out)
 	return out
+}
+
+// markUnsupported 按当前内核能力标注哪些节点无法连接。
+//
+// 在返回给前端时计算而非入库：内核能力属于程序版本的属性，不是节点数据的属性。
+// 将来若支持了新协议，老配置文件里的节点无需迁移即可自动变为可用。
+func markUnsupported(nodes []NodeItem) {
+	for i := range nodes {
+		nodes[i].Unsupported = unsupportedReason(nodes[i].Protocol)
+	}
 }
 
 func (a *App) SelectNode(id string) (NodeItem, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	// 先定位节点并校验内核能力，再改动任何状态。
+	// 否则不受支持的节点会被置为 Active 且写进 activeNodeID，失败后又不回滚，
+	// 用户就被钉在一个永远连不上的节点上（重启也会自动恢复该节点）。
 	var selected NodeItem
 	found := false
 	for i := range a.nodes {
 		if a.nodes[i].ID == id {
-			a.nodes[i].Active = true
 			selected = a.nodes[i]
 			found = true
-			a.activeNodeID = id
-		} else {
-			a.nodes[i].Active = false
+			break
 		}
 	}
 	if !found {
 		return selected, fmt.Errorf("node not found")
+	}
+	if reason := unsupportedReason(selected.Protocol); reason != "" {
+		selected.Unsupported = reason
+		a.addLogInternal("warn", fmt.Sprintf("Node [%s] %s cannot be used: %s", selected.Protocol, selected.Name, reason))
+		return selected, fmt.Errorf("%s", reason)
+	}
+
+	for i := range a.nodes {
+		if a.nodes[i].ID == id {
+			a.nodes[i].Active = true
+			selected = a.nodes[i]
+			a.activeNodeID = id
+		} else {
+			a.nodes[i].Active = false
+		}
 	}
 
 	a.addLogInternal("info", fmt.Sprintf("Primary route switched to node: [%s] %s (%s:%d)", selected.Protocol, selected.Name, selected.Address, selected.Port))
@@ -427,8 +458,24 @@ func (a *App) ImportNodesFromLinks(links string) (int, error) {
 		a.nodes = append(a.nodes, nodes[i])
 	}
 	a.addLogInternal("info", fmt.Sprintf("Imported %d nodes from share links", len(nodes)))
+	// 导入时就点明有多少节点当前内核连不上（主要是 Hysteria2），
+	// 而不是让用户逐个点击后才发现。
+	if n := countUnsupported(nodes); n > 0 {
+		a.addLogInternal("warn", fmt.Sprintf("%d of them cannot be used: the built-in Xray-core does not support their protocol", n))
+	}
 	a.savePersisted()
 	return len(nodes), nil
+}
+
+// countUnsupported 统计当前内核无法连接的节点数量。
+func countUnsupported(nodes []NodeItem) int {
+	n := 0
+	for i := range nodes {
+		if unsupportedReason(nodes[i].Protocol) != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // UpdateNode 编辑已有节点；保留 ID / 活动状态 / 订阅归属，重置测速结果。
@@ -555,6 +602,25 @@ func (a *App) PingNode(id string) int {
 	a.mu.RUnlock()
 
 	if !found {
+		return -2
+	}
+
+	// 当前内核连不上的协议（如 Hysteria2）直接判失败：
+	// 真连接测速会为每个节点起一个临时 Xray 实例，对必然失败的协议纯属浪费，
+	// 批量测速时更会拖慢整体。
+	if reason := unsupportedReason(target.Protocol); reason != "" {
+		a.mu.Lock()
+		for i := range a.nodes {
+			if a.nodes[i].ID == id {
+				a.nodes[i].Delay = -2
+				break
+			}
+		}
+		a.mu.Unlock()
+		if ctx := a.appCtx(); ctx != nil {
+			runtime.EventsEmit(ctx, "kncloud:node-delay", map[string]interface{}{"id": id, "delay": -2})
+		}
+		a.addLogInternal("warn", fmt.Sprintf("Skipped speed test for node [%s]: %s", target.Name, reason))
 		return -2
 	}
 
@@ -885,6 +951,9 @@ func (a *App) refreshSubscription(id string) error {
 	}
 
 	a.addLogInternal("info", fmt.Sprintf("Subscription [%s] updated, %d nodes parsed", subName, len(nodes)))
+	if n := countUnsupported(nodes); n > 0 {
+		a.addLogInternal("warn", fmt.Sprintf("%d nodes in subscription [%s] cannot be used: the built-in Xray-core does not support their protocol", n, subName))
+	}
 	a.savePersisted()
 	return nil
 }

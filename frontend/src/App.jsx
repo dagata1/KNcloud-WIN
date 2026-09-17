@@ -479,6 +479,12 @@ export default function App() {
   const handleSelectNode = async (id) => {
     const target = nodes.find(n => n.id === id);
     if (!target) return;
+    // 当前内核连不上的协议（如 Hysteria2）在此拦下，不做乐观更新也不发请求 ——
+    // 否则界面会先跳到该节点再被后端打回，选中态与实际状态不一致。
+    if (target.unsupported) {
+      showToast(target.unsupported, 'error');
+      return;
+    }
     if (target.active) {
       showToast(`当前已连接至「${target.name}」`, 'info');
       return;
@@ -739,8 +745,10 @@ export default function App() {
   // Filtered nodes
   const filteredNodes = nodes;
 
-  // 仪表盘推荐节点：按真连接延迟排序（已测速升序 → 超时 → 未测速垫底），取前 3 个
+  // 仪表盘推荐节点：按真连接延迟排序（已测速升序 → 超时 → 未测速垫底），取前 3 个。
+  // 当前内核连不上的节点（如 Hysteria2）一律排到最后 —— 推荐位不该出现点了就报错的节点。
   const quickPickNodes = [...nodes].sort((a, b) => {
+    if (!!a.unsupported !== !!b.unsupported) return a.unsupported ? 1 : -1;
     const rank = (d) => (d > 0 ? 0 : d === -2 ? 1 : 2);
     if (rank(a.delay) !== rank(b.delay)) return rank(a.delay) - rank(b.delay);
     return rank(a.delay) === 0 ? a.delay - b.delay : 0;
@@ -1399,8 +1407,11 @@ export default function App() {
                           : isSelected
                             ? 'rgba(0, 120, 212, 0.08)'
                             : 'var(--bg-card)',
-                        transition: 'all 0.15s ease'
+                        transition: 'all 0.15s ease',
+                        // 不可用节点整行淡化，与可用节点一眼区分
+                        opacity: node.unsupported ? 0.55 : 1
                       }}
+                      title={node.unsupported || undefined}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1 }}>
                         <div style={{
@@ -1440,10 +1451,34 @@ export default function App() {
                                 <RefreshCw size={11} className="spin" /> 切换中…
                               </span>
                             )}
+                            {node.unsupported && (
+                              <span
+                                title={node.unsupported}
+                                style={{
+                                  fontSize: '10px',
+                                  fontWeight: 600,
+                                  color: 'var(--danger, #c42b1c)',
+                                  background: 'rgba(196, 43, 28, 0.10)',
+                                  border: '1px solid rgba(196, 43, 28, 0.35)',
+                                  padding: '1px 6px',
+                                  borderRadius: '3px',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  lineHeight: '1.2'
+                                }}
+                              >
+                                不支持
+                              </span>
+                            )}
                           </div>
                           <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
                             {node.address}:{node.port} · 安全: {node.security} · 传输: {node.network}
                           </div>
+                          {node.unsupported && (
+                            <div style={{ fontSize: '11px', color: 'var(--danger, #c42b1c)', marginTop: '3px' }}>
+                              {node.unsupported}
+                            </div>
+                          )}
                         </div>
                       </div>
 

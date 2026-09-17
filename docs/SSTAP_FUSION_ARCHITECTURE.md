@@ -161,32 +161,41 @@ TUN 生效后若不加处理，Xray 自己发往节点服务器的加密流量�
 
 以下内容**当前代码中不存在**，列出以免与已实现部分混淆。
 
-### 4.1 Hysteria2 —— 可导入，但无法连接 ⚠️
-
-这是目前最需要注意的落差：
+### 4.1 Hysteria2 —— 可导入、可展示，但无法连接（已做拦截）
 
 - `sharelink.go:28` **能解析** `hysteria2://` 与 `hy2://`，节点可导入、可在列表显示；
-- 但 `core.go` 的 `buildProxyOutbound` 只有 VLESS / VMess / Trojan / Shadowsocks 四个分支，
-  Hysteria2 落入 `default`，直接返回错误：
-
-```go
-return nil, fmt.Errorf("Xray core does not support %s", node.Protocol)
-```
+- 但 `core.go` 的 `buildProxyOutbound` 只有 VLESS / VMess / Trojan / Shadowsocks 四个分支。
 
 **根因是架构性的**：Hysteria2 基于 QUIC，Xray-core 不提供该出站。补一个 case 解决不了，
 必须引入第二个内核（如 sing-box）。而 sing-box 刚刚被移除，且它是 GPLv3 —— 重新引入
 会让本项目重新受 GPL 约束（详见 `THIRD-PARTY-NOTICES.md`）。
 
-当前状态（**导入成功但一连接就报错**）是最差的用户体验，无论最终走哪条路，
-都应先在 UI 上明确标注该协议不可用。
+**当前决策：暂缓引入第二内核（方案 C），但已消除"导入成功、一连就报错"的体验坑。**
 
-三种可选方向，尚未决策：
+判据集中在 `unsupportedReason()`（`core.go`），为全局唯一事实来源，
+避免协议列表散落多处、改一处漏一处。已覆盖的路径：
+
+| 位置 | 行为 |
+|---|---|
+| `GetNodes()` | 统一为每个节点计算 `Unsupported` 字段下发前端（不入库，按当前内核能力实时计算） |
+| 节点列表 UI | 整行淡化 + 红色「不支持」徽章 + 原因说明，`title` 悬停提示 |
+| `handleSelectNode` | 点击时直接拦下并提示原因，不做乐观更新、不发请求 |
+| `SelectNode()` | 后端二次校验；**先校验再改状态**，避免不可用节点被置为 Active 且无法回滚 |
+| `PingNode()` | 跳过测速直接判超时 —— 必然失败的协议不值得起临时 Xray 实例 |
+| 推荐节点排序 | 不可用节点一律排到最后，推荐位不出现点了就报错的节点 |
+| 导入 / 订阅更新 | 汇总日志点明「其中 N 个当前无法使用」 |
+| `buildProxyOutbound()` | 最后一道防线：即便前端被绕过也拒绝生成非法配置 |
+
+未来若决定支持，只需在 `xraySupportedProtocols` 增项或接入新内核，
+UI 与拦截逻辑无需改动（`Unsupported` 是实时计算的，老配置文件中的节点会自动变为可用）。
+
+三种长期方向仍待决策：
 
 | 方案 | 代价 |
 |---|---|
-| A. 放弃 Hysteria2，明确只做 Xray 系协议 | 单内核 / 无 GPL / 体积不变；需在 UI 标灰并说明 |
+| A. 放弃 Hysteria2，导入阶段即拒绝 | 最简单，但用户订阅里的 HY2 节点会凭空消失 |
 | B. 引入 sing-box 作第二内核 | 重回 GPLv3、体积 +30MB、双内核生命周期管理复杂度 |
-| C. 暂缓，先打磨 L3 接管这一核心优势 | HY2 维持不可用，但**必须先修 UI 提示** |
+| **C. 暂缓（当前）** | 保留节点可见性与清晰提示，等有真实需求再评估 A/B |
 
 ### 4.2 热待机无缝换节点
 

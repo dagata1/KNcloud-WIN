@@ -136,6 +136,7 @@ export namespace main {
 	    group: string;
 	    upload: string;
 	    download: string;
+	    unsupported?: string;
 	    subId?: string;
 	    alterId?: number;
 	    flow?: string;
@@ -167,6 +168,7 @@ export namespace main {
 	        this.group = source["group"];
 	        this.upload = source["upload"];
 	        this.download = source["download"];
+	        this.unsupported = source["unsupported"];
 	        this.subId = source["subId"];
 	        this.alterId = source["alterId"];
 	        this.flow = source["flow"];

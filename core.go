@@ -92,10 +92,8 @@ type ruleObj struct {
 
 // buildCoreConfigJSON 根据当前节点 / 设置 / 路由模式生成 Xray 配置
 func (a *App) buildCoreConfigJSON(node NodeItem) (string, error) {
-	switch node.Protocol {
-	case "VLESS", "VMess", "Trojan", "Shadowsocks":
-	default:
-		return "", fmt.Errorf("Xray core does not support %s (supported: VLESS/VMess/Trojan/Shadowsocks)", node.Protocol)
+	if reason := unsupportedReason(node.Protocol); reason != "" {
+		return "", fmt.Errorf("%s（可用协议：VLESS / VMess / Trojan / Shadowsocks）", reason)
 	}
 
 	listen := "127.0.0.1"
@@ -194,6 +192,33 @@ func adsBlockRule() ruleObj {
 	return ruleObj{Type: "field", Domain: []string{"geosite:category-ads-all"}, OutboundTag: "block"}
 }
 
+// xraySupportedProtocols 是内置 Xray-core 能真正建立出站连接的协议集合。
+//
+// 这是全局唯一判据：buildProxyOutbound、buildCoreConfigJSON、NodeItem.Unsupported
+// 都从这里取值，避免协议列表散落在多处、改一处漏一处。
+var xraySupportedProtocols = map[string]bool{
+	"VLESS":       true,
+	"VMess":       true,
+	"Trojan":      true,
+	"Shadowsocks": true,
+}
+
+// unsupportedReason 返回该协议不被当前内核支持的原因；支持则返回空串。
+//
+// 目前唯一的缺口是 Hysteria2：分享链接能解析、节点能导入并展示，但它基于 QUIC，
+// 而内置的 Xray-core 不提供该出站实现 —— 补一个 case 解决不了，必须引入第二内核
+// （如 sing-box，GPLv3）。在做出该决策之前，这里给出明确原因，由 UI 提前拦截，
+// 避免用户导入成功后一连接才撞上底层报错。
+func unsupportedReason(protocol string) string {
+	if xraySupportedProtocols[protocol] {
+		return ""
+	}
+	if protocol == "Hysteria2" {
+		return "Hysteria2 基于 QUIC，内置的 Xray-core 不支持该协议，暂时无法连接"
+	}
+	return fmt.Sprintf("内置的 Xray-core 不支持 %s 协议", protocol)
+}
+
 func buildProxyOutbound(node NodeItem, muxEnabled bool) (map[string]interface{}, error) {
 	stream := map[string]interface{}{"network": node.Network}
 	switch node.Security {
@@ -275,7 +300,7 @@ func buildProxyOutbound(node NodeItem, muxEnabled bool) (map[string]interface{},
 			"streamSettings": stream,
 		}
 	default:
-		return nil, fmt.Errorf("Xray core does not support %s", node.Protocol)
+		return nil, fmt.Errorf("%s", unsupportedReason(node.Protocol))
 	}
 
 	if muxEnabled && (node.Protocol == "VLESS" || node.Protocol == "VMess" || node.Protocol == "Trojan") {
