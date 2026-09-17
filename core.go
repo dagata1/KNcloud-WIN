@@ -15,8 +15,8 @@ import (
 	"time"
 
 	xcore "github.com/xtls/xray-core/core"
-	"github.com/xtls/xray-core/infra/conf/serial"
 	"github.com/xtls/xray-core/features/stats"
+	"github.com/xtls/xray-core/infra/conf/serial"
 
 	_ "github.com/xtls/xray-core/app/dispatcher"
 	_ "github.com/xtls/xray-core/app/dns"
@@ -38,8 +38,8 @@ import (
 	_ "github.com/xtls/xray-core/transport/internet/grpc"
 	_ "github.com/xtls/xray-core/transport/internet/httpupgrade"
 	_ "github.com/xtls/xray-core/transport/internet/reality"
-	_ "github.com/xtls/xray-core/transport/internet/tcp"
 	_ "github.com/xtls/xray-core/transport/internet/tagged/taggedimpl"
+	_ "github.com/xtls/xray-core/transport/internet/tcp"
 	_ "github.com/xtls/xray-core/transport/internet/tls"
 	_ "github.com/xtls/xray-core/transport/internet/websocket"
 )
@@ -166,8 +166,8 @@ func (a *App) buildCoreConfigJSON(node NodeItem) (string, error) {
 	}
 
 	cfg := map[string]interface{}{
-		"log": map[string]interface{}{"loglevel": "warning"},
-		"dns": map[string]interface{}{"servers": dnsServers, "queryStrategy": "UseIP"},
+		"log":   map[string]interface{}{"loglevel": "warning"},
+		"dns":   map[string]interface{}{"servers": dnsServers, "queryStrategy": "UseIP"},
 		"stats": map[string]interface{}{},
 		"policy": map[string]interface{}{
 			"levels": map[string]interface{}{
@@ -209,9 +209,9 @@ func buildProxyOutbound(node NodeItem, muxEnabled bool) (map[string]interface{},
 		stream["tlsSettings"] = tls
 	case "reality":
 		reality := map[string]interface{}{
-			"serverName": firstNonEmpty(node.SNI, node.Address),
-			"publicKey":  node.PBK,
-			"shortId":    node.SID,
+			"serverName":  firstNonEmpty(node.SNI, node.Address),
+			"publicKey":   node.PBK,
+			"shortId":     node.SID,
 			"fingerprint": firstNonEmpty(node.FP, "chrome"),
 		}
 		stream["security"] = "reality"
