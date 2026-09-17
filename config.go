@@ -15,6 +15,11 @@ type persistedConfig struct {
 	TotalUp       int64              `json:"totalUp"`
 	TotalDown     int64              `json:"totalDown"`
 	Account       *AccountInfo       `json:"account"`
+	// AccountToken 单独持久化登录凭证。
+	// AccountInfo.AuthToken 带 json:"-"（不下发给前端，见 account.go），
+	// 因此不会被上面的 Account 字段一起序列化，必须在这里单独存取，
+	// 否则重启后凭证丢失、用户被迫重新登录。
+	AccountToken string `json:"accountToken,omitempty"`
 }
 
 func appConfigDir() (string, error) {
@@ -75,6 +80,12 @@ func (a *App) loadPersisted() bool {
 	if !settingsHasKey(data, "autoStart") {
 		a.settings.AutoStart = true
 	}
+	// 旧版本没有 autoConnect 字段。老版本的行为就是「启动即接管系统代理」，
+	// 升级时保持该行为不变（置 true），避免老用户升完发现代理不自动开了；
+	// 全新安装则走 NewApp 里的默认值 false。想关掉可在首选项里改。
+	if !settingsHasKey(data, "autoConnect") {
+		a.settings.AutoConnect = true
+	}
 	if cfg.RoutingMode != "" {
 		a.routingMode = cfg.RoutingMode
 	}
@@ -89,6 +100,14 @@ func (a *App) loadPersisted() bool {
 		a.account = *cfg.Account
 		if a.account.Domain == "" {
 			a.account.Domain = kncloudDefaultDomain
+		}
+		// 凭证走独立字段（AccountInfo.AuthToken 带 json:"-"）。
+		// 兼容旧配置：老版本把 token 写在 account.authToken 里，这里回落读取，
+		// 下次保存时自动迁移到新的顶层 accountToken 字段。
+		if cfg.AccountToken != "" {
+			a.account.AuthToken = cfg.AccountToken
+		} else {
+			a.account.AuthToken = legacyAccountToken(data)
 		}
 	}
 	// 数据文件中可能没有 Active 标记，按 activeNodeID 恢复
@@ -144,6 +163,7 @@ func (a *App) savePersisted() {
 		TotalUp:       a.totalUpBytes,
 		TotalDown:     a.totalDownBytes,
 		Account:       &a.account,
+		AccountToken:  a.account.AuthToken,
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -154,4 +174,19 @@ func (a *App) savePersisted() {
 		return
 	}
 	_ = os.Rename(tmp, path)
+}
+
+// legacyAccountToken 从旧版配置里读取 account.authToken。
+// 旧版本 AccountInfo.AuthToken 参与 JSON 序列化，凭证就存在 account 对象内；
+// 现在该字段改为 json:"-"，读取时需要这个兼容路径，否则老用户升级后要重新登录。
+func legacyAccountToken(data []byte) string {
+	var top struct {
+		Account struct {
+			AuthToken string `json:"authToken"`
+		} `json:"account"`
+	}
+	if err := json.Unmarshal(data, &top); err != nil {
+		return ""
+	}
+	return top.Account.AuthToken
 }

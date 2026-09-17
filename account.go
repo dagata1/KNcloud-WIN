@@ -23,9 +23,13 @@ type AccountInfo struct {
 	UsedUp         int64  `json:"usedUp"`         // 已用上行（字节）
 	UsedDown       int64  `json:"usedDown"`       // 已用下行（字节）
 	Expire         string `json:"expire"`         // 格式化到期时间
-	AuthToken      string `json:"authToken"`      // V2Board 登录凭证（用于刷新用量）
-	SubURL         string `json:"subUrl"`
-	SubID          string `json:"subId"` // 关联的订阅 ID
+	// AuthToken 是 V2Board 登录凭证（用于刷新用量）。
+	// json:"-" 的作用：AccountInfo 会被 Wails 绑定原样返回给前端（GetAccount 等），
+	// 而前端从不需要这个凭证 —— 打进 WebView 只会平白扩大泄露面。
+	// 持久化不受影响：token 由 persistedConfig.AccountToken 单独存取（见 config.go）。
+	AuthToken string `json:"-"`
+	SubURL    string `json:"subUrl"`
+	SubID     string `json:"subId"` // 关联的订阅 ID
 }
 
 func defaultAccount() AccountInfo {
@@ -216,8 +220,8 @@ func v2boardLogin(domain, email, password string) (string, error) {
 	}
 
 	var out struct {
-		Data   map[string]interface{} `json:"data"`
-		Message string               `json:"message"`
+		Data    map[string]interface{} `json:"data"`
+		Message string                 `json:"message"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
 		return "", fmt.Errorf("failed to parse response (HTTP %d)", resp.StatusCode)

@@ -10,7 +10,6 @@ export namespace main {
 	    usedUp: number;
 	    usedDown: number;
 	    expire: string;
-	    authToken: string;
 	    subUrl: string;
 	    subId: string;
 	
@@ -29,7 +28,6 @@ export namespace main {
 	        this.usedUp = source["usedUp"];
 	        this.usedDown = source["usedDown"];
 	        this.expire = source["expire"];
-	        this.authToken = source["authToken"];
 	        this.subUrl = source["subUrl"];
 	        this.subId = source["subId"];
 	    }
@@ -45,6 +43,7 @@ export namespace main {
 	    coreType: string;
 	    dnsServers: string;
 	    minimizeToTray: boolean;
+	    autoConnect: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppSettings(source);
@@ -62,6 +61,7 @@ export namespace main {
 	        this.coreType = source["coreType"];
 	        this.dnsServers = source["dnsServers"];
 	        this.minimizeToTray = source["minimizeToTray"];
+	        this.autoConnect = source["autoConnect"];
 	    }
 	}
 	export class CoreStatus {
