@@ -31,12 +31,15 @@ const (
 	createNoWindow = 0x08000000
 
 	// SSTap 方案核心参数（复刻 SSTap-beta 的 TAP 分流机制）
-	tunIfaceName = "KNcloud-TAP"       // 固定虚拟网卡名（对应 SSTAP 1）
-	tunGateway   = "172.19.0.1"        // 虚拟网卡网关地址（/30）
-	tunDnsAddr   = "198.18.0.2"        // 写入虚拟网卡的系统 DNS，端口 53 被 sing-box 劫持
-	tunMetric    = 1                   // 虚拟网卡接口 metric（对应 SSTap 抢占 DNS 优先级）
-	routeMetric  = 5                   // 分流路由 metric
-	tunGateway6  = "fdfe:dcba:9876::1" // 虚拟网卡 IPv6 地址（/126），配合 2000::/3 分流路由堵 IPv6 泄漏
+	tunIfaceName = "KNcloud-TAP" // 固定虚拟网卡名（对应 SSTAP 1）
+	tunGateway   = "172.19.0.1"  // 虚拟网卡网关地址（/30）
+	// tunDnsAddr 写入虚拟网卡的系统 DNS（198.18.0.0/15 基准测试段）。
+	// 该地址不运行任何 DNS 服务，只是把整机 DNS 查询引进 TUN：
+	// gvisor 捕获目标端口 53 的 UDP 后交给 relayDNS，经物理网卡直发公共 DNS（见 tapstack.go）。
+	tunDnsAddr  = "198.18.0.2"
+	tunMetric   = 1                   // 虚拟网卡接口 metric（对应 SSTap 抢占 DNS 优先级）
+	routeMetric = 5                   // 分流路由 metric
+	tunGateway6 = "fdfe:dcba:9876::1" // 虚拟网卡 IPv6 地址（/126），配合 2000::/3 分流路由堵 IPv6 泄漏
 )
 
 var (
