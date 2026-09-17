@@ -158,6 +158,22 @@ func (a *App) stopWebLogin() {
 	a.mu.Lock()
 	m := a.webLogin
 	a.mu.Unlock()
+	stopWebLoginManager(m)
+}
+
+// stopWebLoginLocked 与 stopWebLogin 等价，但要求调用方已持有 a.mu。
+//
+// 为什么需要这个变体：a.mu 是 sync.RWMutex，不可重入。cleanup() 在持写锁的状态下
+// 清理各子系统，如果那里直接调 stopWebLogin()，它会再次 a.mu.Lock() 而永久阻塞 ——
+// 表现为「点退出后进程卡死」，且卡在还原系统代理之后、停内核/停 TUN/存盘之前，
+// 导致 TUN 路由残留 + 本次会话配置丢失。见 TestCleanupDoesNotDeadlock。
+func (a *App) stopWebLoginLocked() {
+	stopWebLoginManager(a.webLogin)
+}
+
+// stopWebLoginManager 关闭回调服务，是上面两个入口的公共实现。
+// m 为 nil（用户从未走过网页登录）时直接返回。
+func stopWebLoginManager(m *webLoginManager) {
 	if m == nil {
 		return
 	}

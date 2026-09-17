@@ -6,13 +6,10 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
-
-	"golang.org/x/sys/windows"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	xcore "github.com/xtls/xray-core/core"
@@ -94,6 +91,11 @@ type AppSettings struct {
 	// MinimizeToTray 为 true 时，点窗口关闭按钮只收进托盘，程序继续后台运行；
 	// 真正退出需要走托盘菜单的「退出」。
 	MinimizeToTray bool `json:"minimizeToTray"`
+	// AutoConnect 为 true 时，程序启动即自动拉起内核并接管 Windows 系统代理。
+	// 之前这个行为是硬编码且无法关闭的：叠加默认开启的开机自启与最小化到托盘，
+	// 用户开机就在毫无提示的情况下被接管系统代理，连窗口都不会出现。
+	// 现在改为可配置，且默认关闭 —— 代理的启停应当由用户显式决定。
+	AutoConnect bool `json:"autoConnect"`
 }
 
 type App struct {
@@ -116,20 +118,14 @@ type App struct {
 	lastUpSample   int64
 	lastDownSample int64
 	xrayInst       *xcore.Instance
-	tunCmd         *exec.Cmd
 	tunRunning     bool
 	tunIfaceIdx    uint32
-	tunJob         windows.Handle    // sing-box 所在 KILL_ON_JOB_CLOSE Job
-	tunProcDone    chan struct{}     // sing-box 进程退出信号
 	tunHostRoutes  []mibIPForwardRow // 写入物理网卡的节点 /32 直连路由（断开时回收）
-	tunReplacedCore bool             // TUN 启动时是否停掉了正在运行的内核（断开 TUN 时据此恢复常规代理）
-	tunWarm         bool             // sing-box 与虚拟网卡热待机（TUN 软停止后保留，重开秒级生效）
-	tunWarmNode     NodeItem         // 热待机中 sing-box 出站使用的节点（变更后需冷启动重建）
-	tap             *tapForwarder    // tapstack.go：Go 重写的 SSTap 核心（常驻网卡 + gvisor 转发），TUN 主路径
+	tap            *tapForwarder     // tapstack.go：Go 重写的 SSTap 核心（常驻网卡 + gvisor 转发），TUN 唯一实现
 	tunSampleUp    int64
 	tunSampleDown  int64
 	account        AccountInfo
-	quitting       bool // true 表示用户已确认退出（托盘菜单「退出」），关闭窗口不再拦截
+	quitting       bool             // true 表示用户已确认退出（托盘菜单「退出」），关闭窗口不再拦截
 	webLogin       *webLoginManager // 网页授权登录的本地回调服务（见 weblogin.go）；用指针避免拷贝内部互斥锁
 }
 
@@ -151,6 +147,7 @@ func NewApp() *App {
 			DnsServers: "1.1.1.1, 8.8.8.8, 223.5.5.5",
 
 			MinimizeToTray: true,
+			AutoConnect:    false, // 默认不自动接管系统代理，见 AppSettings.AutoConnect
 		},
 		nodes:         []NodeItem{},
 		subscriptions: []SubscriptionItem{},
@@ -233,14 +230,16 @@ func (a *App) startup(ctx context.Context) {
 	// 系统托盘：右下角常驻图标 + 右键菜单
 	startTray(a)
 
-	// 真实内核流量统计轮询：每秒采样一次计数器
-	go func() {
+	// 真实内核流量统计轮询：每秒采样一次计数器。
+	// ctx 在进入 goroutine 前捕获为局部变量：直接在循环里读 a.ctx 属于无锁读，
+	// 与 startup() 的写入构成数据竞争。
+	go func(ctx context.Context) {
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 
 		for {
 			select {
-			case <-a.ctx.Done():
+			case <-ctx.Done():
 				return
 			case <-ticker.C:
 				up, down, ok := a.tunTrafficSample()
@@ -270,7 +269,7 @@ func (a *App) startup(ctx context.Context) {
 				a.mu.Unlock()
 			}
 		}
-	}()
+	}(ctx)
 
 	// 登录过官网账户：启动时自动同步订阅节点
 	go func() {
@@ -284,7 +283,16 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}()
 
-	// 启动即自动开启内核与系统代理（用户无需手动操作）
+	// 自动连接：仅在用户显式开启 autoConnect 时才启动内核并接管系统代理。
+	// 关闭时（默认）程序只是起界面，代理由用户手动开启。
+	a.mu.RLock()
+	autoConnect := a.settings.AutoConnect
+	a.mu.RUnlock()
+	if !autoConnect {
+		a.addLogInternal("info", "Auto-connect is off; core and system proxy stay idle until you start them")
+		return
+	}
+
 	go func() {
 		a.mu.Lock()
 		if err := a.startCoreLocked(); err != nil {
@@ -562,9 +570,11 @@ func (a *App) PingNode(id string) int {
 	}
 	a.mu.Unlock()
 
-	// 实时推送当前节点的真连接测速结果给前端，实现先测完先显示
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "kncloud:node-delay", map[string]interface{}{
+	// 实时推送当前节点的真连接测速结果给前端，实现先测完先显示。
+	// 用 appCtx() 加锁读取：PingNodes 会并发拉起多个 goroutine 调用本函数，
+	// 与 startup() 写入 a.ctx 存在竞争。
+	if ctx := a.appCtx(); ctx != nil {
+		runtime.EventsEmit(ctx, "kncloud:node-delay", map[string]interface{}{
 			"id":    id,
 			"delay": latency,
 		})
@@ -1014,7 +1024,8 @@ func (a *App) cleanup() {
 		setWindowsSystemProxy(false, "")
 		a.systemProxy = false
 	}
-	a.stopWebLogin()
+	// 必须用 *Locked 变体：此处已持有 a.mu，而 a.mu 不可重入（见 stopWebLoginLocked 注释）
+	a.stopWebLoginLocked()
 	a.stopCoreLocked()
 	// tapstack：停转发 + 撤路由；常驻网卡保留在系统里（与 SSTap 的 TAP 一致）
 	a.tunSoftStopLocked()
