@@ -119,9 +119,11 @@ func runTunSelfTest(a *App) int {
 		fmt.Printf("[ OK ] routes restored (8.8.8.8 via ifIdx=%d gw=%v)\n", r2.IfIndex, dwordToIP(r2.NextHop))
 	}
 	a.mu.RLock()
-	singboxGone := a.tunCmd == nil && a.tunJob == 0 && a.tunIfaceIdx == 0 && len(a.tunHostRoutes) == 0
+	// 停止后应无残留：转发栈已停、节点直连路由已回收。
+	// （常驻网卡按设计保留在系统里，故此处不校验 tunIfaceIdx。）
+	tunStateClean := !a.tunRunning && a.tap == nil && len(a.tunHostRoutes) == 0
 	a.mu.RUnlock()
-	if !singboxGone {
+	if !tunStateClean {
 		fmt.Printf("[FAIL] TUN state not fully cleaned\n")
 		fail++
 	} else {

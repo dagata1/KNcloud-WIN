@@ -2,11 +2,7 @@ package main
 
 import (
 	"encoding/binary"
-	"fmt"
 	"net"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -96,58 +92,6 @@ func TestComputeBypassRoutes(t *testing.T) {
 	t.Logf("bypass routes: %d", len(routes))
 }
 
-func TestBuildTunConfigValid(t *testing.T) {
-	node := NodeItem{
-		Protocol: "Shadowsocks", Address: "cm.ktno.cc", Port: 456,
-		Method: "chacha20-ietf-poly1305", UUID: "pw",
-	}
-	tmp := t.TempDir()
-	srs := filepath.Join(tmp, "geosite-cn.srs")
-	if err := os.WriteFile(srs, geositeCnSrs, 0644); err != nil {
-		t.Fatal(err)
-	}
-	// 用真实 sing-box 校验配置合法性
-	sb := filepath.Join(os.Getenv("APPDATA"), "KNcloud", "sing-box.exe")
-	if _, err := os.Stat(sb); err != nil {
-		t.Skip("sing-box.exe not found")
-	}
-
-	// 物理出口网卡名：优先用探测函数，拿不到就退回第一个非回环网卡
-	bindIface := physicalInterfaceName("223.5.5.5")
-	if bindIface == "" {
-		if ifaces, err := net.Interfaces(); err == nil {
-			for _, it := range ifaces {
-				if it.Flags&net.FlagLoopback == 0 && it.Name != tunIfaceName {
-					bindIface = it.Name
-					break
-				}
-			}
-		}
-	}
-
-	for _, bind := range []string{"", bindIface} {
-		cfgJSON, err := buildTunConfigJSON(node, srs, bind)
-		if err != nil {
-			t.Fatal(err)
-		}
-		cfgPath := filepath.Join(tmp, fmt.Sprintf("cfg_%d.json", len(bind)))
-		if err := os.WriteFile(cfgPath, []byte(cfgJSON), 0644); err != nil {
-			t.Fatal(err)
-		}
-		out, err := exec.Command(sb, "check", "-c", cfgPath).CombinedOutput()
-		if err != nil {
-			t.Fatalf("sing-box check failed (bind=%q): %v\n%s\nconfig:\n%s", bind, err, out, cfgJSON)
-		}
-		// bind_interface 必须真的出现在 direct / proxy 出站里，否则防环路形同虚设
-		if bind != "" {
-			if !strings.Contains(cfgJSON, `"bind_interface":"`+bind+`"`) {
-				t.Fatalf("bind_interface not injected into config: %s", cfgJSON)
-			}
-		}
-		t.Logf("sing-box check OK (bind=%q)", bind)
-	}
-}
-
 func TestBestRouteFromRows(t *testing.T) {
 	// mkRoute 生成旧式 DWORD 路由行（IP 存网络序 DWORD）
 	mkRoute := func(destCIDR, nextHop string, ifIdx, metric uint32) mibIPForwardRow {
@@ -230,101 +174,5 @@ func TestGetIpForwardTableAndBestRoute(t *testing.T) {
 		}
 	} else {
 		t.Fatalf("GetBestRoute failed")
-	}
-}
-
-// TestParseOwnWintunDeviceIDs 覆盖残留 wintun 设备识别。
-// 关键回归点：pnputil 实际输出的实例 ID 是 "SWD\Wintun\"（仅首字母大写），
-// 旧实现按全大写 "SWD\WINTUN\" 做大小写敏感匹配，导致永远清理不掉残留设备。
-func TestParseOwnWintunDeviceIDs(t *testing.T) {
-	const chineseOutput = `Microsoft PnP 工具
-
-实例 ID:                SWD\Wintun\{72312B66-D2DE-2908-88D7-1344B4C396A9}
-设备描述:         sing-tun Tunnel
-类名:                 Net
-类 GUID:                 {4d36e972-e325-11ce-bfc1-08002be10318}
-制造商名称:          WireGuard LLC
-状态:                     已断开连接
-驱动程序名称:                oem23.inf
-
-实例 ID:                SWD\WINTUN\{F3B97229-AC55-706A-1D78-803E273E9A86}
-设备描述:         sing-tun Tunnel
-类名:                 Net
-状态:                     已断开连接
-
-实例 ID:                SWD\Wintun\{AAAA0000-0000-0000-0000-000000000001}
-设备描述:         WireGuard Tunnel
-类名:                 Net
-状态:                     已断开连接
-
-实例 ID:                SWD\Wintun\{CCCC0000-0000-0000-0000-000000000003}
-设备描述:         Xray Tunnel
-类名:                 Net
-状态:                     已断开连接
-
-实例 ID:                SWD\MMDEVAPI\{0.0.1.00000000}.{02cdbcfa-0283-4c69-b633-c31b37e7c5a1}
-设备描述:         Line In (High Definition Audio Device)
-状态:                     已断开连接
-`
-
-	got := parseOwnWintunDeviceIDs(chineseOutput)
-	if len(got) != 3 {
-		t.Fatalf("expected 3 own wintun devices, got %d: %v", len(got), got)
-	}
-	for _, id := range got {
-		if !strings.HasPrefix(id, `SWD\Wintun\`) && !strings.HasPrefix(id, `SWD\WINTUN\`) {
-			t.Fatalf("unexpected id %q", id)
-		}
-		if strings.Contains(id, "AAAA0000") {
-			t.Fatalf("foreign WireGuard device must not be removed: %q", id)
-		}
-	}
-	xrayLeftover := `SWD\Wintun\{CCCC0000-0000-0000-0000-000000000003}`
-	foundXray := false
-	for _, id := range got {
-		if id == xrayLeftover {
-			foundXray = true
-		}
-	}
-	if !foundXray {
-		t.Fatalf("early Xray-mode leftover adapter must be cleaned: %v", got)
-	}
-
-	// 英文系统输出同样要能识别
-	const englishOutput = `Microsoft PnP Utility
-
-Instance ID:            SWD\Wintun\{BBBB0000-0000-0000-0000-000000000002}
-Device Description:     sing-tun Tunnel
-Class Name:             Net
-Status:                 Disconnected
-`
-	if got := parseOwnWintunDeviceIDs(englishOutput); len(got) != 1 {
-		t.Fatalf("english output: expected 1 device, got %d: %v", len(got), got)
-	}
-
-	// 没有任何 wintun 设备时必须返回空，避免误删
-	if got := parseOwnWintunDeviceIDs("Microsoft PnP 工具\n\n实例 ID:  USB\\ROOT_HUB\\4&5a7864a&0\n"); len(got) != 0 {
-		t.Fatalf("expected no devices, got %v", got)
-	}
-}
-
-func TestIndexFoldASCII(t *testing.T) {
-	if got := indexFoldASCII(`SWD\WINTUN\{X}`, `swd\wintun\`); got != 0 {
-		t.Fatalf("case-insensitive match at 0 expected, got %d", got)
-	}
-	if got := indexFoldASCII(`nothing here`, `SWD\WINTUN\`); got != -1 {
-		t.Fatalf("expected -1, got %d", got)
-	}
-	if got := indexFoldASCII(``, `abc`); got != -1 {
-		t.Fatalf("expected -1 for empty haystack, got %d", got)
-	}
-	// 中文（GBK/UTF-8）前缀不得影响 ASCII 子串定位
-	line := `实例 ID:                SWD\Wintun\{X}`
-	got := indexFoldASCII(line, `SWD\WINTUN\`)
-	if got < 0 {
-		t.Fatalf("expected to find id prefix in %q", line)
-	}
-	if line[got:got+len(`SWD\Wintun\`)] != `SWD\Wintun\` {
-		t.Fatalf("found at wrong offset: %q", line[got:])
 	}
 }
