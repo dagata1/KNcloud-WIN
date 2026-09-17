@@ -47,6 +47,7 @@ import {
   SelectNode,
   AddNode,
   DeleteNode,
+  DeleteNodes,
   PingNode,
   PingAllNodes,
   PingNodes,
@@ -65,6 +66,7 @@ import {
   Logout,
   SyncNodes,
   StartWebLogin,
+  CancelWebLogin,
   GetLogs,
   ClearLogs,
   GetSettings,
@@ -121,6 +123,7 @@ export default function App() {
   const [selectedProto, setSelectedProto] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedNodeIds, setSelectedNodeIds] = useState([]); // 节点列表多选（Ctrl+A / Ctrl+点击 / Shift+点击）
+  const [deletingSelected, setDeletingSelected] = useState(false); // 批量删除进行中
   const [switchingNodeId, setSwitchingNodeId] = useState(null); // 正在切换中的节点 ID
   const [isPingingAll, setIsPingingAll] = useState(false);
 
@@ -370,6 +373,14 @@ export default function App() {
     } catch (e) {
       setLoginErr(String(e?.message || e).replace(/^.*?: /, ''));
     }
+  };
+
+  // 取消等待网页授权：关掉后端的本地回调服务，恢复按钮可用
+  const handleCancelWebLogin = async () => {
+    try {
+      await CancelWebLogin();
+    } catch (e) { /* ignore */ }
+    setWebLoginWaiting(false);
   };
 
   const handleLogout = async () => {
@@ -637,6 +648,26 @@ export default function App() {
     setNodes(updatedNodes);
   };
 
+  // 批量删除选中节点。后端 DeleteNodes 一次性处理整批（只重启一次内核、
+  // 只落盘一次），比循环调用单条删除稳妥。
+  const handleDeleteSelected = async () => {
+    if (selectedNodeIds.length === 0 || deletingSelected) return;
+    const n = selectedNodeIds.length;
+    if (!window.confirm(`确定删除选中的 ${n} 个节点吗？此操作不可撤销。`)) return;
+    setDeletingSelected(true);
+    try {
+      await DeleteNodes(selectedNodeIds);
+      setSelectedNodeIds([]);
+      setNodes(await GetNodes());
+      setStatus(await GetCoreStatus());
+      showToast(`已删除 ${n} 个节点`, 'success');
+    } catch (err) {
+      showToast('批量删除失败：' + (err?.message || err), 'error');
+    } finally {
+      setDeletingSelected(false);
+    }
+  };
+
   const resetNodeForm = () => {
     setEditingNodeId(null);
     setNewNode({
@@ -759,6 +790,13 @@ export default function App() {
             <Globe size={14} />
             <span>{webLoginWaiting ? '等待网页授权…' : '通过网站登录'}</span>
           </button>
+          {/* 等待授权时给出退出口：否则用户只能干等后端 5 分钟超时 */}
+          {webLoginWaiting && (
+            <button className="win11-btn login-btn" onClick={handleCancelWebLogin}>
+              <X size={14} />
+              <span>取消网页登录</span>
+            </button>
+          )}
         </div>
       </div>
     );
@@ -1243,7 +1281,7 @@ export default function App() {
                   <h1 className="content-title">节点列表</h1>
                   {selectedNodeIds.length > 0 ? (
                     <p className="content-subtitle">
-                      已选中 {selectedNodeIds.length} 个节点 · 按 <kbd style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: '3px', border: '1px solid var(--border-subtle)' }}>Ctrl+R</kbd> 批量测速 · 按 <kbd style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: '3px', border: '1px solid var(--border-subtle)' }}>Esc</kbd> 取消选择
+                      已选中 {selectedNodeIds.length} 个节点 · 按 <kbd style={{ background: "var(--bg-card)", padding: "1px 5px", borderRadius: "3px", border: "1px solid var(--border-subtle)" }}>Ctrl+R</kbd> 批量测速 · 按 <kbd style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: '3px', border: '1px solid var(--border-subtle)' }}>Esc</kbd> 取消选择
                     </p>
                   ) : (
                     <p className="content-subtitle">
@@ -1262,6 +1300,15 @@ export default function App() {
                       >
                         <Gauge size={13} className={isPingingAll ? 'spin' : ''} />
                         <span>{isPingingAll ? '测速中…' : `测速选中 (${selectedNodeIds.length})`}</span>
+                      </button>
+                      <button
+                        className="win11-btn"
+                        onClick={handleDeleteSelected}
+                        disabled={deletingSelected}
+                        title="删除所有选中的节点"
+                      >
+                        <Trash2 size={13} />
+                        <span>{deletingSelected ? '删除中…' : `删除选中 (${selectedNodeIds.length})`}</span>
                       </button>
                       <button
                         className="win11-btn"
@@ -1628,15 +1675,17 @@ export default function App() {
                 <h3 style={{ fontSize: '14px', fontWeight: 600 }}>核心引擎与多路复用</h3>
                 <div className="form-group">
                   <label className="form-label">底层 Core 类型</label>
-                  <select
+                  {/* 目前只内置 Xray-core 一种内核（编译期嵌入）。
+                      这里曾是可选 sing-box / V2Ray-core 的下拉框，但后端
+                      startCoreLocked() 永远启动 Xray，选项不产生任何效果 ——
+                      属于会误导用户的「假开关」，改为只读展示。 */}
+                  <input
+                    type="text"
                     className="win11-input"
-                    value={settings.coreType}
-                    onChange={e => setLocalSettings({ ...settings, coreType: e.target.value })}
-                  >
-                    <option value="Xray-core">Xray-core (推荐，协议支持全)</option>
-                    <option value="Sing-box">sing-box (高性能现代核心)</option>
-                    <option value="V2Ray-core">V2Ray-core (传统稳定版)</option>
-                  </select>
+                    value={`${settings.coreType || 'Xray-core'}（内置，当前版本不可切换）`}
+                    readOnly
+                    disabled
+                  />
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1684,6 +1733,22 @@ export default function App() {
                       type="checkbox"
                       checked={!!settings.autoStart}
                       onChange={e => setLocalSettings({ ...settings, autoStart: e.target.checked })}
+                    />
+                    <span className="toggle-track"><span className="toggle-thumb" /></span>
+                  </label>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 500 }}>启动时自动连接</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                      程序启动即拉起内核并接管 Windows 系统代理；关闭后由你手动开启
+                    </div>
+                  </div>
+                  <label className="win11-toggle">
+                    <input
+                      type="checkbox"
+                      checked={!!settings.autoConnect}
+                      onChange={e => setLocalSettings({ ...settings, autoConnect: e.target.checked })}
                     />
                     <span className="toggle-track"><span className="toggle-thumb" /></span>
                   </label>
