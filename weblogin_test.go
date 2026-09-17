@@ -14,6 +14,11 @@ import (
 // 模拟网页授权后重定向（GET /auth/callback?token=..&email=..）→
 // completeLogin 被触发（token 无效时记录失败日志，不落地登录态）。
 func TestWebLoginCallback(t *testing.T) {
+	// StartWebLogin 会通过 rundll32 拉起系统默认浏览器 —— CI 上既没有浏览器
+	// 也不该弹窗，故 -short 模式跳过。本机开发时正常执行。
+	if testing.Short() {
+		t.Skip("skipping in -short mode: opens the system default browser")
+	}
 	app := NewApp()
 
 	if _, err := app.StartWebLogin(); err != nil {
@@ -65,6 +70,10 @@ func TestWebLoginCallback(t *testing.T) {
 
 // TestWebLoginMissingToken 缺少 token 参数时回调应返回 400
 func TestWebLoginMissingToken(t *testing.T) {
+	// 同 TestWebLoginCallback：会拉起系统浏览器，-short 模式跳过
+	if testing.Short() {
+		t.Skip("skipping in -short mode: opens the system default browser")
+	}
 	app := NewApp()
 	if _, err := app.StartWebLogin(); err != nil {
 		t.Fatalf("StartWebLogin failed: %v", err)
