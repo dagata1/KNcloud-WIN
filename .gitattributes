@@ -1,0 +1,15 @@
+# 统一换行：文本文件一律 LF（保证 Windows runner 上 gofmt/tidy 检查稳定）
+* text=auto eol=lf
+
+# 二进制明确标注
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.exe binary
+*.dll binary
+*.woff2 binary
+*.dat binary
+*.srs binary
+*.pdf binary
