@@ -243,11 +243,28 @@ TUN 生效后若不加处理，Xray 自己发往节点服务器的加密流量�
 
 ---
 
-## 4. 尚未实现
+## 4. 验证条件的限制
+
+Windows 专属代码（DPAPI 系统调用、Wintun、路由表操作）无法在非 Windows 环境
+链接成真，本仓库的验证分三层：
+
+| 层次 | 手段 | 覆盖范围 |
+|---|---|---|
+| 类型与静态检查 | `GOOS=windows go vet`（含 unsafe 指针检查） | Windows 专属文件 |
+| 真实运行 | 把跨平台函数原样抽出到独立工程，`-race` 实跑 | 出站热切换、凭证加解密、DNS 上游选择、设置校验 |
+| CI | `windows-latest` 上 vet + test + wails build | 全量 |
+
+CI 已加 `pull_request` 触发，但**由机器人账号创建的 PR 不会触发 workflow**
+（GitHub 防递归机制）。要拿到完整的 Windows 构建结果，需由人类账号打开/重开
+PR，或把分支合入 `main`。
+
+---
+
+## 5. 尚未实现
 
 以下内容**当前代码中不存在**，列出以免与已实现部分混淆。
 
-### 4.1 Hysteria2 —— 可导入、可展示，但无法连接（已做拦截）
+### 5.1 Hysteria2 —— 可导入、可展示，但无法连接（已做拦截）
 
 - `sharelink.go:28` **能解析** `hysteria2://` 与 `hy2://`，节点可导入、可在列表显示；
 - 但 `core.go` 的 `buildProxyOutbound` 只有 VLESS / VMess / Trojan / Shadowsocks 四个分支。
@@ -283,13 +300,13 @@ UI 与拦截逻辑无需改动（`Unsupported` 是实时计算的，老配置文
 | B. 引入 sing-box 作第二内核 | 重回 GPLv3、体积 +30MB、双内核生命周期管理复杂度 |
 | **C. 暂缓（当前）** | 保留节点可见性与清晰提示，等有真实需求再评估 A/B |
 
-### 4.2 其它
+### 5.2 其它
 
 - **TCP 快速回收 / 连接级统计**：当前统计基于内核 stats 计数器，无单连接粒度
 
 ---
 
-## 5. 明确不做
+## 6. 明确不做
 
 ### 5.1 双模协议栈（badvpn-tun2socks + TAP-Windows 降级）
 
@@ -310,7 +327,7 @@ UI 与拦截逻辑无需改动（`Unsupported` 是实时计算的，老配置文
 
 ---
 
-## 6. 与原始 SSTap 的对应关系
+## 7. 与原始 SSTap 的对应关系
 
 | SSTap 组件 | 本项目对应 | 位置 |
 |---|---|---|
@@ -323,19 +340,19 @@ UI 与拦截逻辑无需改动（`Unsupported` 是实时计算的，老配置文
 
 ---
 
-## 7. 核心文件
+## 8. 核心文件
 
 | 文件 | 行数 | 职责 |
 |---|---|---|
-| `tapstack.go` | 1061 | wintun 适配器 + gVisor 栈 + TCP/UDP/DNS 转发（TUN 唯一实现） |
-| `app.go` | 1202 | `App` 结构体、Wails 绑定方法、节点/订阅/设置/生命周期 |
+| `tapstack.go` | 1071 | wintun 适配器 + gVisor 栈 + TCP/UDP/DNS 转发（TUN 唯一实现） |
+| `app.go` | 1208 | `App` 结构体、Wails 绑定方法、节点/订阅/设置/生命周期 |
 | `tun.go` | 544 | Windows 路由表操作、`applySstapRouting`、IPv6 路由 |
-| `core.go` | 611 | Xray-core 嵌入、配置生成、geo 资源、真连接测速、出站热切换 |
+| `core.go` | 652 | Xray-core 嵌入、配置生成、geo 资源、真连接测速、出站热切换 |
 | `sstap.go` | 162 | 分流策略引擎、SSTap `.rules` 解析（纯函数） |
 | `config.go` | 303 | 配置持久化、凭证加解密接入、旧版迁移 |
 | `credstore.go` | 62 | 凭证加解密的编码与迁移（跨平台） |
 | `dpapi_windows.go` | 132 | DPAPI 系统调用封装 |
-| `frontend/src/App.jsx` | 1059 | 前端状态管理与副作用（视图已拆分至 components/） |
+| `frontend/src/App.jsx` | 1091 | 前端状态管理与副作用（视图已拆分至 components/） |
 
 > `tun.go` 中的 sing-box 子进程链路（启停、Job 对象、pnputil 设备清理、
 > 配置生成，共 715 行）已整体删除，其职责由 `tapstack.go` 承担。
