@@ -26,7 +26,8 @@ func TestVisionNodeSkipsMux(t *testing.T) {
 	if _, has := out["mux"]; has {
 		t.Fatalf("Vision node must not enable mux")
 	}
-	user := out["settings"].(map[string]interface{})["vnext"].([]interface{})[0].(map[string]interface{})["users"].([]interface{})[0].(map[string]interface{})
+	// buildProxyOutbound 用 Go 字面量构造，vnext/users 均为 []map[string]interface{}（非 JSON 反序列化的 []interface{}）
+	user := out["settings"].(map[string]interface{})["vnext"].([]map[string]interface{})[0]["users"].([]map[string]interface{})[0]
 	if user["flow"] != "xray-rprx-vision" {
 		t.Fatalf("flow not preserved: %v", user)
 	}
