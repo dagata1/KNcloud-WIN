@@ -52,11 +52,32 @@ jobs:
       - name: Vet
         shell: bash
         # unsafeptr 关闭：代码里的 Win32 syscall 惯用法（uintptr↔unsafe.Pointer）会触发误报
-        run: go vet -unsafeptr=false ./...
+        run: |
+          go vet -unsafeptr=false ./... 2>&1 | tee vet-output.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Vet diagnostics
+        if: failure()
+        shell: bash
+        # 失败时把 vet 输出转成 ::error:: 注解（日志 zip 之外的可读通道）
+        run: |
+          while IFS= read -r line; do
+            echo "::error::${line:0:4000}"
+          done < vet-output.log
 
       - name: Test
         shell: bash
-        run: go test ./... -count=1 -timeout 10m
+        run: |
+          go test ./... -count=1 -timeout 10m 2>&1 | tee test-output.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Test diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          while IFS= read -r line; do
+            echo "::error::${line:0:4000}"
+          done < test-output.log
 
       - name: Build Application with Wails
         shell: bash
