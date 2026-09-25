@@ -103,9 +103,15 @@ jobs:
           { echo "=== test tail ==="; grep -v "^go: downloading" test-output.log | tail -40; } > diag.txt
           echo "::error::$(sed ':a;N;$!ba;s/\n/%0A/g' diag.txt)"
 
+      - name: Install NSIS
+        shell: bash
+        # wails -nsis 在 makensis 不在 PATH 时只打 warning 并静默跳过安装器，
+        # 这里预装保证安装器一定产出
+        run: choco install nsis -y --no-progress
+
       - name: Build Application with Wails
         shell: bash
-        # -nsis 同时产出 NSIS 安装器（wails 自动下载 NSIS 工具链）
+        # -nsis 同时产出 NSIS 安装器
         run: |
           wails build -platform windows/amd64 -clean -nsis
 
