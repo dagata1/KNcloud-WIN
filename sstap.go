@@ -132,10 +132,11 @@ func complementCIDRs(cidrs []net.IPNet) []net.IPNet {
 
 // sstapPolicyRoutes 计算指定分流策略下需要指向虚拟网卡网关的 CIDR 列表。
 // 策略（与 SSTap rules 的对应关系）：
-//   bypass-cn       代理中国大陆以外流量（= Skip-all-China-IP.rules）
-//   global          代理全部流量
-//   proxy-cn        仅代理中国大陆 IP（= China-IP-only.rules）
-//   sstap:<file>    按指定 .rules 规则文件分流
+//
+//	bypass-cn       代理中国大陆以外流量（= Skip-all-China-IP.rules）
+//	global          代理全部流量
+//	proxy-cn        仅代理中国大陆 IP（= China-IP-only.rules）
+//	sstap:<file>    按指定 .rules 规则文件分流
 func sstapPolicyRoutes(policy string) ([]net.IPNet, error) {
 	switch {
 	case policy == "global":

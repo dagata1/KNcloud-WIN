@@ -216,8 +216,8 @@ func v2boardLogin(domain, email, password string) (string, error) {
 	}
 
 	var out struct {
-		Data   map[string]interface{} `json:"data"`
-		Message string               `json:"message"`
+		Data    map[string]interface{} `json:"data"`
+		Message string                 `json:"message"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
 		return "", fmt.Errorf("failed to parse response (HTTP %d)", resp.StatusCode)

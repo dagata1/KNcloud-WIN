@@ -70,6 +70,3 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
 )
-
-// replace github.com/wailsapp/wails/v2 v2.15.0 => C:\Users\Admin\go\pkg\mod
-

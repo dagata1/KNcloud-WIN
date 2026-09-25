@@ -222,4 +222,3 @@ func webLoginHTML(msg string) string {
 		`<div style="text-align:center;"><div style="font-size:20px;font-weight:600;margin-bottom:12px;">KNcloud-WIN</div>` +
 		`<div style="font-size:14px;opacity:.8;">` + msg + `</div></div></body></html>`
 }
-
