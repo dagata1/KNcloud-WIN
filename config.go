@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -105,7 +106,13 @@ func (a *App) loadPersisted() bool {
 		// 兼容旧配置：老版本把 token 写在 account.authToken 里，这里回落读取，
 		// 下次保存时自动迁移到新的顶层 accountToken 字段。
 		if cfg.AccountToken != "" {
-			a.account.AuthToken = cfg.AccountToken
+			tok, err := decodeSecret(cfg.AccountToken)
+			if err != nil {
+				// 解不开就当未登录处理，避免拿着坏凭证反复请求接口
+				a.addLogInternal("warn", fmt.Sprintf("Stored credential unusable (%v); please log in again", err))
+				tok = ""
+			}
+			a.account.AuthToken = tok
 		} else {
 			a.account.AuthToken = legacyAccountToken(data)
 		}
@@ -163,7 +170,13 @@ func (a *App) savePersisted() {
 		TotalUp:       a.totalUpBytes,
 		TotalDown:     a.totalDownBytes,
 		Account:       &a.account,
-		AccountToken:  a.account.AuthToken,
+	}
+	// 凭证加密后落盘。加密失败时宁可不写：安全功能必须 fail-closed，
+	// 退回明文等于这道防护从未存在。代价只是下次启动需重新登录。
+	if tok, err := encodeSecret(a.account.AuthToken); err != nil {
+		a.addLogInternal("error", fmt.Sprintf("Credential not persisted (%v); you may need to log in again next time", err))
+	} else {
+		cfg.AccountToken = tok
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
