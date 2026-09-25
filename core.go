@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -48,6 +50,7 @@ import (
 var geoAssets embed.FS
 
 // ensureGeoAssets 将内置的 geoip/geosite 数据释放到用户配置目录，返回资产目录。
+// 用 SHA-256 校验落地文件：内容不符（损坏 / 被安全软件截断 / 旧版本残留）时重新释放。
 func ensureGeoAssets() (string, error) {
 	dir, err := appConfigDir()
 	if err != nil {
@@ -55,7 +58,7 @@ func ensureGeoAssets() (string, error) {
 	}
 	for _, name := range []string{"geoip.dat", "geosite.dat"} {
 		dst := filepath.Join(dir, name)
-		if st, err := os.Stat(dst); err == nil && st.Size() > 1024 {
+		if fileSHA256Matches(dst, pinnedGeoSHA256[name]) {
 			continue
 		}
 		src, err := geoAssets.Open("geo/" + name)
@@ -76,6 +79,29 @@ func ensureGeoAssets() (string, error) {
 		src.Close()
 	}
 	return dir, nil
+}
+
+// pinnedGeoSHA256 内置 geo 数据的期望哈希（与 embed 的文件一致，geo 数据更新时需同步更新）。
+var pinnedGeoSHA256 = map[string]string{
+	"geoip.dat":   "45325fee1555c8bf04115100694ce8429b88c9bb3b3548abcfd236a1c8ea146f",
+	"geosite.dat": "13e05b7769f66e18255354e42c81d58b4d22243fe8db9ee77bc806b5e09ddd10",
+}
+
+// fileSHA256Matches 判断 path 的 SHA-256 是否等于 want（want 为空视为不匹配）。
+func fileSHA256Matches(path, want string) bool {
+	if want == "" {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return false
+	}
+	return hex.EncodeToString(h.Sum(nil)) == want
 }
 
 func xrayCoreVersion() string {
@@ -134,17 +160,31 @@ func (a *App) buildCoreConfigJSON(node NodeItem) (string, error) {
 	}
 
 	var rules []ruleObj
-	// proxy-cn / sstap 规则文件的分流发生在路由表层（TUN），到达 Xray 的流量
-	// 本来就是应代理的部分 —— 对 Xray 而言等同于 global。
-	effectiveMode := a.routingMode
-	if effectiveMode == "proxy-cn" || strings.HasPrefix(effectiveMode, "sstap:") {
-		effectiveMode = "global"
+	// TUN 分流发生在路由表层，Xray 侧规则需与 TUN 层语义互补：
+	//   - global / direct：全部代理 / 全部直连；
+	//   - bypass-cn（及 Skip=1 的 sstap 规则文件）：到达 Xray 的本就是「应代理」流量，
+	//     默认 proxy，CN 直连兜底（保证系统代理模式下国内流量不绕道）；
+	//   - proxy-cn（及 Skip=0 的 sstap 规则文件）：CN 走 proxy、其余默认 direct，
+	//     系统代理模式下同一套规则恰好实现「仅国内走代理」。
+	policy := a.routingMode
+	if strings.HasPrefix(policy, "sstap:") {
+		if r, perr := parseSstapRuleFile(strings.TrimPrefix(policy, "sstap:")); perr == nil && !r.Skip {
+			policy = "proxy-cn"
+		} else {
+			policy = "bypass-cn"
+		}
 	}
-	switch effectiveMode {
+	switch policy {
 	case "global":
 		rules = append(rules, adsBlockRule(), ruleObj{Type: "field", Network: "tcp,udp", OutboundTag: "proxy"})
 	case "direct":
 		rules = append(rules, ruleObj{Type: "field", Network: "tcp,udp", OutboundTag: "direct"})
+	case "proxy-cn":
+		rules = append(rules,
+			adsBlockRule(),
+			ruleObj{Type: "field", IP: []string{"geoip:private", "geoip:cn"}, OutboundTag: "proxy"},
+			ruleObj{Type: "field", Network: "tcp,udp", OutboundTag: "direct"},
+		)
 	default: // bypass-cn
 		rules = append(rules,
 			adsBlockRule(),
@@ -200,7 +240,7 @@ func buildProxyOutbound(node NodeItem, muxEnabled bool) (map[string]interface{},
 	case "tls":
 		tls := map[string]interface{}{
 			"serverName":    firstNonEmpty(node.SNI, node.Address),
-			"allowInsecure": false,
+			"allowInsecure": node.AllowInsecure,
 		}
 		if node.FP != "" {
 			tls["fingerprint"] = node.FP
@@ -278,7 +318,10 @@ func buildProxyOutbound(node NodeItem, muxEnabled bool) (map[string]interface{},
 		return nil, fmt.Errorf("Xray core does not support %s", node.Protocol)
 	}
 
-	if muxEnabled && (node.Protocol == "VLESS" || node.Protocol == "VMess" || node.Protocol == "Trojan") {
+	// XTLS Vision（flow=xray-rprx-vision）与 mux 不兼容：服务端会把携带 TCP 请求的
+	// mux 连接整个断开（Xray-core vless inbound/outbound 语义）。与 v2rayN 一致：
+	// 节点带 flow 时禁用 mux，避免「测速正常（测速不走 mux）但实际连不上」。
+	if muxEnabled && node.Flow == "" && (node.Protocol == "VLESS" || node.Protocol == "VMess" || node.Protocol == "Trojan") {
 		out["mux"] = map[string]interface{}{"enabled": true, "concurrency": 8}
 	}
 	return out, nil

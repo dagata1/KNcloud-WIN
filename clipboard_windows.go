@@ -27,6 +27,7 @@ var (
 	procGlobalAlloc      = kernel32.NewProc("GlobalAlloc")
 	procGlobalLock       = kernel32.NewProc("GlobalLock")
 	procGlobalUnlock     = kernel32.NewProc("GlobalUnlock")
+	procGlobalSize       = kernel32.NewProc("GlobalSize")
 )
 
 const (
@@ -90,7 +91,13 @@ func clipboardText() (string, error) {
 		return "", fmt.Errorf("GlobalLock failed")
 	}
 	defer procGlobalUnlock.Call(h)
-	u := unsafe.Slice((*uint16)(unsafe.Pointer(p)), 1<<20)
+	// 以 GlobalSize 确定实际分配大小，并设 4M 字符读取上限：
+	// 剪贴板内容由外部程序控制，防止异常大对象拖垮 UI
+	size, _, _ := procGlobalSize.Call(h)
+	if size == 0 || size > 8<<20 {
+		size = 8 << 20
+	}
+	u := unsafe.Slice((*uint16)(unsafe.Pointer(p)), size/2)
 	n := 0
 	for n < len(u) && u[n] != 0 {
 		n++

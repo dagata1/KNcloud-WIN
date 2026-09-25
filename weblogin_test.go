@@ -4,93 +4,110 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strings"
 	"testing"
-	"time"
 )
 
-// TestWebLoginCallback 验证网页授权回传链路：StartWebLogin 起本地回调服务 →
-// 模拟网页授权后重定向（GET /auth/callback?token=..&email=..）→
-// completeLogin 被触发（token 无效时记录失败日志，不落地登录态）。
-func TestWebLoginCallback(t *testing.T) {
+// startTestCallbackServer 起 weblogin 回调服务（不经 StartWebLogin，避免真的拉起浏览器）。
+func startTestCallbackServer(t *testing.T) (*App, *webLoginManager, int, string) {
+	t.Helper()
 	app := NewApp()
+	app.mu.Lock()
+	app.webLogin = &webLoginManager{}
+	m := app.webLogin
+	app.mu.Unlock()
 
-	if _, err := app.StartWebLogin(); err != nil {
-		t.Fatalf("StartWebLogin failed: %v", err)
+	m.mu.Lock()
+	port, err := m.startCallbackServer()
+	if err != nil {
+		m.mu.Unlock()
+		t.Fatalf("startCallbackServer failed: %v", err)
 	}
-	defer app.stopWebLogin()
+	cbPath := m.cbPath
+	m.mu.Unlock()
 
-	// 从日志里取本地回调端口
-	var port string
-	for i := 0; i < 20 && port == ""; i++ {
-		time.Sleep(100 * time.Millisecond)
-		for _, l := range app.GetLogs() {
-			if m := regexp.MustCompile(`127\.0\.0\.1:(\d+)`).FindStringSubmatch(l.Message); m != nil {
-				port = m[1]
-				break
-			}
-		}
-	}
-	if port == "" {
-		t.Fatal("callback server did not start (no port in logs)")
-	}
+	t.Cleanup(func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		m.stopLocked()
+	})
+	return app, m, port, cbPath
+}
 
-	// 模拟网页授权后的重定向
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%s/auth/callback?token=fake-token&email=test@example.com", port))
+// TestWebLoginCallbackRoundTrip 正确路径 + token → 200，结果送达内部通道。
+func TestWebLoginCallbackRoundTrip(t *testing.T) {
+	_, m, port, cbPath := startTestCallbackServer(t)
+
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d%s?token=fake-token&email=test@example.com", port, cbPath))
 	if err != nil {
 		t.Fatalf("callback request failed: %v", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		t.Fatalf("callback HTTP %d", resp.StatusCode)
+		t.Fatalf("callback HTTP %d: %s", resp.StatusCode, body)
 	}
 	if !strings.Contains(string(body), "KNcloud-WIN") {
 		t.Fatalf("unexpected callback page: %s", body)
 	}
 
-	// fake token 无法换取订阅：completeLogin 应失败并留下错误日志
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		for _, l := range app.GetLogs() {
-			if l.Level == "error" && strings.Contains(l.Message, "Web login failed") {
-				return // 链路走通
-			}
+	select {
+	case res := <-m.done:
+		if res.token != "fake-token" || res.email != "test@example.com" {
+			t.Fatalf("wrong result delivered: %+v", res)
 		}
-		time.Sleep(200 * time.Millisecond)
+	default:
+		t.Fatal("callback result not delivered to channel")
 	}
-	t.Fatal("expected 'Web login failed' log entry after invalid-token callback")
 }
 
-// TestWebLoginMissingToken 缺少 token 参数时回调应返回 400
-func TestWebLoginMissingToken(t *testing.T) {
-	app := NewApp()
-	if _, err := app.StartWebLogin(); err != nil {
-		t.Fatalf("StartWebLogin failed: %v", err)
-	}
-	defer app.stopWebLogin()
+// TestWebLoginCallbackRejectsUnknownPath 未知/旧版固定路径一律 404（防登录 CSRF 的核心断言）。
+func TestWebLoginCallbackRejectsUnknownPath(t *testing.T) {
+	_, _, port, _ := startTestCallbackServer(t)
 
-	var port string
-	for i := 0; i < 20 && port == ""; i++ {
-		time.Sleep(100 * time.Millisecond)
-		for _, l := range app.GetLogs() {
-			if m := regexp.MustCompile(`127\.0\.0\.1:(\d+)`).FindStringSubmatch(l.Message); m != nil {
-				port = m[1]
-				break
-			}
+	for _, p := range []string{"/auth/callback", "/auth/callback/wrong-secret", "/"} {
+		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d%s?token=attacker-token", port, p))
+		if err != nil {
+			t.Fatalf("request %s failed: %v", p, err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("path %s: expected 404, got %d", p, resp.StatusCode)
 		}
 	}
-	if port == "" {
-		t.Fatal("callback server did not start")
-	}
+}
 
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%s/auth/callback?email=test@example.com", port))
+// TestWebLoginCallbackMissingToken 带正确路径但缺 token → 400。
+func TestWebLoginCallbackMissingToken(t *testing.T) {
+	_, _, port, cbPath := startTestCallbackServer(t)
+
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d%s?email=test@example.com", port, cbPath))
 	if err != nil {
 		t.Fatalf("callback request failed: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 400 {
 		t.Fatalf("expected HTTP 400 for missing token, got %d", resp.StatusCode)
+	}
+}
+
+// TestWebLoginCallbackSecretRandomized 每次启动回调服务都应生成不同的随机路径。
+func TestWebLoginCallbackSecretRandomized(t *testing.T) {
+	_, m, _, first := startTestCallbackServer(t)
+
+	m.mu.Lock()
+	if _, err := m.startCallbackServer(); err != nil {
+		m.mu.Unlock()
+		t.Fatalf("restart callback server: %v", err)
+	}
+	second := m.cbPath
+	m.mu.Unlock()
+
+	if first == "" || second == "" || first == second {
+		t.Fatalf("callback path not randomized: %q vs %q", first, second)
+	}
+	if !strings.HasPrefix(first, "/auth/callback/") || len(first) < len("/auth/callback/") {
+		t.Fatalf("callback path %q lacks secret segment", first)
 	}
 }

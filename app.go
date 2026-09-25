@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,11 +14,20 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sys/windows"
-
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	xcore "github.com/xtls/xray-core/core"
 )
+
+// newNodeID 生成节点 ID：crypto/rand 的 64-bit 十六进制串（纳秒时间戳在
+// 批量导入时可能重复，随机 ID 无此问题）。
+func newNodeID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// 兜底：rand 不可用时退回时间戳（不至无法创建节点）
+		return fmt.Sprintf("n%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
 
 type NodeItem struct {
 	ID       string `json:"id"`
@@ -45,6 +56,9 @@ type NodeItem struct {
 	HostName    string `json:"hostName,omitempty"`
 	ServiceName string `json:"serviceName,omitempty"`
 	Method      string `json:"method,omitempty"`
+	// AllowInsecure 对应分享链接的 allowInsecure=1：跳过 TLS 证书校验（自签证书节点用）。
+	// 注意：开启后连接不再验证服务器身份，仅在信任节点来源时使用。
+	AllowInsecure bool `json:"allowInsecure,omitempty"`
 }
 
 type SubscriptionItem struct {
@@ -91,6 +105,8 @@ type AppSettings struct {
 	MuxEnabled bool   `json:"muxEnabled"`
 	CoreType   string `json:"coreType"`
 	DnsServers string `json:"dnsServers"`
+	// AutoConnect 为 true 时应用启动即自动开启内核并恢复系统代理（README 的「自动启动内核」）。
+	AutoConnect bool `json:"autoConnect"`
 	// MinimizeToTray 为 true 时，点窗口关闭按钮只收进托盘，程序继续后台运行；
 	// 真正退出需要走托盘菜单的「退出」。
 	MinimizeToTray bool `json:"minimizeToTray"`
@@ -116,22 +132,17 @@ type App struct {
 	lastUpSample    int64
 	lastDownSample  int64
 	xrayInst        *xcore.Instance
-	tunCmd          *exec.Cmd
 	tunRunning      bool
-	tunIfaceIdx     uint32
-	tunJob          windows.Handle    // sing-box 所在 KILL_ON_JOB_CLOSE Job
-	tunProcDone     chan struct{}     // sing-box 进程退出信号
+	tunIfaceIdx     uint32            // TUN 虚拟网卡接口索引（0 = 未连接）
 	tunHostRoutes   []mibIPForwardRow // 写入物理网卡的节点 /32 直连路由（断开时回收）
-	tunReplacedCore bool              // TUN 启动时是否停掉了正在运行的内核（断开 TUN 时据此恢复常规代理）
-	tunWarm         bool              // sing-box 与虚拟网卡热待机（TUN 软停止后保留，重开秒级生效）
-	tunWarmNode     NodeItem          // 热待机中 sing-box 出站使用的节点（变更后需冷启动重建）
-	tap             *tapForwarder     // tapstack.go：Go 重写的 SSTap 核心（常驻网卡 + gvisor 转发），TUN 主路径
+	tap             *tapForwarder     // tapstack.go：Go 重写的 SSTap 核心（进程内复用网卡 + gvisor 转发），TUN 主路径
 	nativeTunCmd    *exec.Cmd         // C/lwIP tun2socks helper, SSTap-compatible fast path
 	nativeTunDone   chan struct{}
 	tunSampleUp     int64
 	tunSampleDown   int64
 	account         AccountInfo
 	quitting        bool             // true 表示用户已确认退出（托盘菜单「退出」），关闭窗口不再拦截
+	lastSystemProxy bool             // 上次用户意图的系统代理开关（启动时据此恢复/识别崩溃残留）
 	webLogin        *webLoginManager // 网页授权登录的本地回调服务（见 weblogin.go）；用指针避免拷贝内部互斥锁
 }
 
@@ -148,10 +159,11 @@ func NewApp() *App {
 			HttpPort:   10809,
 			AutoStart:  true,
 			AllowLan:   false,
-			MuxEnabled: true,
+			MuxEnabled: false, // v2rayN 同款默认：mux 关闭。XTLS Vision 节点与 mux 不兼容，按节点手动开启
 			CoreType:   "Xray-core",
 			DnsServers: "1.1.1.1, 8.8.8.8, 223.5.5.5",
 
+			AutoConnect:    true,
 			MinimizeToTray: true,
 		},
 		nodes:         []NodeItem{},
@@ -163,6 +175,9 @@ func NewApp() *App {
 	app.account = defaultAccount()
 
 	loaded := app.loadPersisted()
+	if !loaded {
+		app.lastSystemProxy = true // 首次运行：沿用「启动即自动开系统代理」的旧行为
+	}
 	if loaded {
 		app.addLogInternal("info", "KNcloud-WIN restored local configuration from disk")
 	} else {
@@ -286,27 +301,60 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}()
 
-	// 启动即自动开启内核与系统代理（用户无需手动操作）
+	// 按用户设置决定是否自动开启内核与系统代理（首选项「自动启动内核」，README 同款语义）。
+	// 同时处理崩溃残留：上次异常退出可能把系统代理留在开启状态 —— 若注册表里的代理
+	// 地址指向本应用 HTTP 端口而本次不打算开启代理，则清理掉，避免「断网」假象。
 	go func() {
 		a.mu.Lock()
+		defer a.mu.Unlock()
+
+		startCore := a.settings.AutoConnect
+		wantProxy := startCore && a.lastSystemProxy
+
+		if getWindowsSystemProxy() && !wantProxy {
+			if srv := getWindowsProxyServer(); srv == fmt.Sprintf("127.0.0.1:%d", a.settings.HttpPort) {
+				if err := setWindowsSystemProxy(false, ""); err != nil {
+					a.addLogInternal("error", fmt.Sprintf("Failed to clean up leftover system proxy: %v", err))
+				} else {
+					a.systemProxy = false
+					a.addLogInternal("warn", "Cleaned up system proxy left over from the previous run")
+				}
+			}
+		}
+
+		if !startCore {
+			a.addLogInternal("info", "Auto-start core is disabled in preferences, waiting for manual start")
+			return
+		}
+
 		if err := a.startCoreLocked(); err != nil {
 			a.coreRunning = false
 			a.addLogInternal("error", fmt.Sprintf("Auto-start core failed: %v", err))
-			a.mu.Unlock()
 			return
 		}
 		a.coreRunning = true
 
-		server := fmt.Sprintf("127.0.0.1:%d", a.settings.HttpPort)
-		if err := setWindowsSystemProxy(true, server); err != nil {
-			a.addLogInternal("error", fmt.Sprintf("Failed to auto-enable system proxy: %v", err))
-		} else {
-			a.systemProxy = true
-			a.addLogInternal("info", fmt.Sprintf("System proxy auto-enabled -> %s", server))
+		if wantProxy {
+			server := fmt.Sprintf("127.0.0.1:%d", a.settings.HttpPort)
+			if err := setWindowsSystemProxy(true, server); err != nil {
+				a.addLogInternal("error", fmt.Sprintf("Failed to auto-enable system proxy: %v", err))
+			} else {
+				a.systemProxy = true
+				a.addLogInternal("info", fmt.Sprintf("System proxy auto-enabled -> %s", server))
+			}
 		}
 		a.savePersisted()
-		a.mu.Unlock()
 	}()
+
+	// 带 --tun-autostart 参数启动（提权重启链路）：等核心拉起后自动进入 TUN 模式
+	if flagTunAutoStart && isElevated() {
+		go func() {
+			time.Sleep(800 * time.Millisecond) // 等上面的自动启动协程先完成
+			if _, err := a.SimpleConnect(true); err != nil {
+				a.addLogInternal("error", fmt.Sprintf("Auto-start TUN after elevation failed: %v", err))
+			}
+		}()
+	}
 }
 
 func formatSpeed(bytesPerSec int64) string {
@@ -388,7 +436,7 @@ func (a *App) AddNode(node NodeItem) error {
 	defer a.mu.Unlock()
 
 	if node.ID == "" {
-		node.ID = fmt.Sprintf("node-%d", time.Now().UnixNano())
+		node.ID = newNodeID()
 	}
 	if node.Name == "" {
 		node.Name = fmt.Sprintf("%s:%d", node.Address, node.Port)
@@ -414,7 +462,7 @@ func (a *App) ImportNodesFromLinks(links string) (int, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for i := range nodes {
-		nodes[i].ID = fmt.Sprintf("node-%d", time.Now().UnixNano()+int64(i))
+		nodes[i].ID = newNodeID()
 		if nodes[i].Group == "" {
 			nodes[i].Group = "Custom"
 		}
@@ -832,7 +880,7 @@ func (a *App) refreshSubscription(id string) error {
 		}
 	}
 	for i := range nodes {
-		nodes[i].ID = fmt.Sprintf("node-%d", time.Now().UnixNano()+int64(i))
+		nodes[i].ID = newNodeID()
 		nodes[i].SubID = id
 		nodes[i].Group = subName
 		updated = append(updated, nodes[i])
@@ -1018,8 +1066,10 @@ func (a *App) cleanup() {
 	}
 	a.stopWebLogin()
 	a.stopCoreLocked()
-	// tapstack：停转发 + 撤路由；常驻网卡保留在系统里（与 SSTap 的 TAP 一致）
+	// tapstack：停转发 + 撤路由，然后释放适配器会话与句柄
+	// （wintun 0.14 会连同删除本进程创建的适配器及其路由，无需额外清理）
 	a.tunSoftStopLocked()
+	knTap.closeSession()
 	a.savePersisted()
 }
 

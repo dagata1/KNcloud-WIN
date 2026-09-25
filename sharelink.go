@@ -115,6 +115,7 @@ func parseUserHostLink(link, proto string) (NodeItem, error) {
 		security = "tls"
 		network = "udp"
 	}
+	allowInsecure := q.Get("allowInsecure") == "1" || strings.EqualFold(q.Get("allowInsecure"), "true")
 	methodPass := ""
 	if proto == "Shadowsocks" {
 		methodPass = u.User.Username()
@@ -137,6 +138,8 @@ func parseUserHostLink(link, proto string) (NodeItem, error) {
 		HostName:    q.Get("host"),
 		ServiceName: q.Get("serviceName"),
 		Delay:       -1,
+
+		AllowInsecure: allowInsecure,
 	}, nil
 }
 
@@ -302,6 +305,9 @@ func BuildShareLink(n NodeItem) (string, error) {
 		}
 		if n.ServiceName != "" {
 			q.Set("serviceName", n.ServiceName)
+		}
+		if n.AllowInsecure {
+			q.Set("allowInsecure", "1")
 		}
 		scheme := strings.ToLower(n.Protocol)
 		u := url.URL{

@@ -13,7 +13,23 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// flagTunAutoStart 由 --tun-autostart 参数置位：提权重启链路里，
+// 新实例完成初始化后自动进入 TUN 模式（见 elevation_windows.go）。
+var flagTunAutoStart bool
+
+// selftestMode 由 --tun-selftest 参数置位：禁止 SimpleConnect 触发提权重启。
+var selftestMode bool
+
 func main() {
+	for _, arg := range os.Args[1:] {
+		if arg == "--tun-autostart" {
+			flagTunAutoStart = true
+		}
+		if arg == "--tun-selftest" {
+			selftestMode = true
+		}
+	}
+
 	app := NewApp()
 
 	// 隐藏自检入口：KNcloud-WIN.exe --tun-selftest（需管理员），验证简易模式 SSTap 链路

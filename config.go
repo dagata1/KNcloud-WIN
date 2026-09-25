@@ -15,6 +15,9 @@ type persistedConfig struct {
 	TotalUp       int64              `json:"totalUp"`
 	TotalDown     int64              `json:"totalDown"`
 	Account       *AccountInfo       `json:"account"`
+	// LastSystemProxy 记录上次退出/保存时「用户意图上的」系统代理开关状态，
+	// 启动时用它决定是否自动恢复系统代理，并识别崩溃残留。
+	LastSystemProxy bool `json:"lastSystemProxy"`
 }
 
 func appConfigDir() (string, error) {
@@ -75,6 +78,12 @@ func (a *App) loadPersisted() bool {
 	if !settingsHasKey(data, "autoStart") {
 		a.settings.AutoStart = true
 	}
+	// 旧版本配置文件里没有 autoConnect 字段：旧行为是启动即自动开内核，保持一致
+	if !settingsHasKey(data, "autoConnect") {
+		a.settings.AutoConnect = true
+	}
+	// 旧版本配置文件里没有 lastSystemProxy 字段：旧行为是启动即开系统代理
+	a.lastSystemProxy = !topLevelHasKey(data, "lastSystemProxy") || cfg.LastSystemProxy
 	if cfg.RoutingMode != "" {
 		a.routingMode = cfg.RoutingMode
 	}
@@ -90,6 +99,8 @@ func (a *App) loadPersisted() bool {
 		if a.account.Domain == "" {
 			a.account.Domain = kncloudDefaultDomain
 		}
+		// token 以 DPAPI 密文落盘（旧版明文兼容）：解密恢复内存中的可用凭证
+		decryptStoredToken(&a.account)
 	}
 	// 数据文件中可能没有 Active 标记，按 activeNodeID 恢复
 	found := false
@@ -129,21 +140,35 @@ func settingsHasKey(data []byte, key string) bool {
 	return ok
 }
 
+// topLevelHasKey 判断持久化 JSON 顶层是否存在指定字段。
+func topLevelHasKey(data []byte, key string) bool {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		return false
+	}
+	_, ok := top[key]
+	return ok
+}
+
 // savePersisted 将当前状态写入磁盘。调用方需已持有写锁（或在无并发场景调用）。
 func (a *App) savePersisted() {
 	path := configFilePath()
 	if path == "" {
 		return
 	}
+	// token 以 DPAPI 密文落盘：加密在值拷贝上进行，不影响内存态的可用凭证
+	acct := a.account
+	encryptStoredToken(&acct)
 	cfg := persistedConfig{
-		Nodes:         a.nodes,
-		Subscriptions: a.subscriptions,
-		Settings:      a.settings,
-		RoutingMode:   a.routingMode,
-		ActiveNodeID:  a.activeNodeID,
-		TotalUp:       a.totalUpBytes,
-		TotalDown:     a.totalDownBytes,
-		Account:       &a.account,
+		Nodes:           a.nodes,
+		Subscriptions:   a.subscriptions,
+		Settings:        a.settings,
+		RoutingMode:     a.routingMode,
+		ActiveNodeID:    a.activeNodeID,
+		TotalUp:         a.totalUpBytes,
+		TotalDown:       a.totalDownBytes,
+		Account:         &acct,
+		LastSystemProxy: a.systemProxy,
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

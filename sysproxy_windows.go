@@ -58,3 +58,18 @@ func getWindowsSystemProxy() bool {
 	}
 	return val == 1
 }
+
+// getWindowsProxyServer 返回系统代理服务器地址（如 "127.0.0.1:10809"），未设置返回空串。
+func getWindowsProxyServer() string {
+	k, err := registry.OpenKey(registry.CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", registry.QUERY_VALUE)
+	if err != nil {
+		return ""
+	}
+	defer k.Close()
+
+	val, _, err := k.GetStringValue("ProxyServer")
+	if err != nil {
+		return ""
+	}
+	return val
+}

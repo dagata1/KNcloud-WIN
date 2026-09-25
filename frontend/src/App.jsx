@@ -131,8 +131,9 @@ export default function App() {
     socksPort: 10808,
     httpPort: 10809,
     autoStart: true,
+    autoConnect: true,
     allowLan: false,
-    muxEnabled: true,
+    muxEnabled: false,
     coreType: 'Xray-core',
     dnsServers: '1.1.1.1, 8.8.8.8, 223.5.5.5',
     minimizeToTray: true
@@ -654,7 +655,11 @@ export default function App() {
   const openEditNode = (node, e) => {
     e.stopPropagation();
     setEditingNodeId(node.id);
+    // 保留节点的全部字段（flow/sni/pbk/sid/fp/path/host/serviceName 等）。
+    // 表单只展示基础字段，若只拷贝表单字段，保存时 UpdateNode 会把
+    // 分享链接导入的扩展字段全部清空 —— 这里必须整对象带入。
     setNewNode({
+      ...node,
       name: node.name || '',
       protocol: node.protocol || 'VLESS',
       address: node.address || '',
@@ -1642,7 +1647,7 @@ export default function App() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <div style={{ fontSize: '13px', fontWeight: 500 }}>启用 MUX 多路复用 (Multiplexing)</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>合并 TCP 连接，降低握手延迟</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>合并 TCP 连接，降低握手延迟（XTLS Vision 节点会自动跳过）</div>
                   </div>
                   <label className="win11-toggle">
                     <input
@@ -1684,6 +1689,22 @@ export default function App() {
                       type="checkbox"
                       checked={!!settings.autoStart}
                       onChange={e => setLocalSettings({ ...settings, autoStart: e.target.checked })}
+                    />
+                    <span className="toggle-track"><span className="toggle-thumb" /></span>
+                  </label>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 500 }}>自动启动内核</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                      应用启动时自动开启内核，并恢复上次的系统代理状态
+                    </div>
+                  </div>
+                  <label className="win11-toggle">
+                    <input
+                      type="checkbox"
+                      checked={!!settings.autoConnect}
+                      onChange={e => setLocalSettings({ ...settings, autoConnect: e.target.checked })}
                     />
                     <span className="toggle-track"><span className="toggle-thumb" /></span>
                   </label>

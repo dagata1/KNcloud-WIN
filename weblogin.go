@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/http"
@@ -17,10 +19,15 @@ import (
 const webLoginTimeout = 5 * time.Minute
 
 // 网页授权流程（与 Android 端 WEB_AUTH_INTEGRATION.md 同源，回调方式不同）：
-//  1. 客户端在 127.0.0.1 随机端口起一个一次性 HTTP 回调服务
-//  2. 打开系统浏览器访问 官网/#/login?from=win_auth&callback=http://127.0.0.1:{port}/auth/callback
+//  1. 客户端在 127.0.0.1 随机端口起一个一次性 HTTP 回调服务，回调路径内嵌
+//     128-bit 随机密文（/auth/callback/{secret}）
+//  2. 打开系统浏览器访问 官网/#/login?from=win_auth&callback=http://127.0.0.1:{port}/auth/callback/{secret}&state={secret}
 //  3. 用户在网页完成登录并授权后，网页重定向到 callback 并带上 token（auth_data）与 email
 //  4. 客户端收到回调即完成登录、拉取订阅，并通过 Wails 事件通知前端刷新界面
+//
+// 回调路径的随机密文是防「登录 CSRF」的关键：本机回调服务只监听 127.0.0.1，
+// 外部网页若不知道随机路径就无法伪造回调（把受害者登录进攻击者账户、让受害者
+// 流量走攻击者的节点）。
 //
 // 前端事件：
 //   - "kncloud:web-login"       携带 AccountInfo，登录成功
@@ -32,10 +39,19 @@ type webLoginResult struct {
 }
 
 type webLoginManager struct {
-	mu   sync.Mutex
-	ln   net.Listener
-	srv  *http.Server
-	done chan *webLoginResult
+	mu     sync.Mutex
+	ln     net.Listener
+	srv    *http.Server
+	done   chan *webLoginResult
+	cbPath string // 本次会话的随机回调路径，如 /auth/callback/7f3a...
+}
+
+func newCallbackSecret() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 func (m *webLoginManager) stopLocked() {
@@ -48,6 +64,58 @@ func (m *webLoginManager) stopLocked() {
 	m.srv = nil
 	m.ln = nil
 	m.done = nil
+	m.cbPath = ""
+}
+
+// startCallbackServer 起一个一次性的本地回调 HTTP 服务，返回监听端口。
+// 调用方需持有 m.mu。
+func (m *webLoginManager) startCallbackServer() (int, error) {
+	m.stopLocked() // 重复点击时先关掉上一次的回调服务
+
+	secret, err := newCallbackSecret()
+	if err != nil {
+		return 0, fmt.Errorf("generate callback secret: %w", err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, fmt.Errorf("failed to start local callback server: %v", err)
+	}
+	resCh := make(chan *webLoginResult, 1)
+	port := ln.Addr().(*net.TCPAddr).Port
+	cbPath := "/auth/callback/" + secret
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(cbPath, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		token := q.Get("token")
+		if token == "" {
+			token = q.Get("auth_data")
+		}
+		email := q.Get("email")
+		// state 参数：官网未来支持原样回传时做二次校验；当前仅记录
+		if token == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(webLoginHTML("授权失败：回调中缺少 token 参数，请重试")))
+			return
+		}
+		select {
+		case resCh <- &webLoginResult{token: token, email: email}:
+		default:
+		}
+		_, _ = w.Write([]byte(webLoginHTML("登录成功！请回到 KNcloud-WIN 客户端继续使用，本页面可以关闭。")))
+	})
+	// 未知路径一律 404：防止攻击者向旧版固定路径 /auth/callback 伪造回调
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
+
+	srv := &http.Server{Handler: mux}
+	m.ln = ln
+	m.srv = srv
+	m.done = resCh
+	m.cbPath = cbPath
+	go func() { _ = srv.Serve(ln) }()
+	return port, nil
 }
 
 // StartWebLogin 打开浏览器进行网页登录授权，返回本次打开的授权 URL。
@@ -68,44 +136,18 @@ func (a *App) StartWebLogin() (string, error) {
 	m := a.webLogin
 	a.mu.Unlock()
 	m.mu.Lock()
-	m.stopLocked() // 重复点击时先关掉上一次的回调服务
-
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	port, err := m.startCallbackServer()
 	if err != nil {
 		m.mu.Unlock()
-		return "", fmt.Errorf("failed to start local callback server: %v", err)
+		return "", err
 	}
-	resCh := make(chan *webLoginResult, 1)
-	port := ln.Addr().(*net.TCPAddr).Port
-	mux := http.NewServeMux()
-	mux.HandleFunc("/auth/callback", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		token := q.Get("token")
-		if token == "" {
-			token = q.Get("auth_data")
-		}
-		email := q.Get("email")
-		if token == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(webLoginHTML("授权失败：回调中缺少 token 参数，请重试")))
-			return
-		}
-		select {
-		case resCh <- &webLoginResult{token: token, email: email}:
-		default:
-		}
-		_, _ = w.Write([]byte(webLoginHTML("登录成功！请回到 KNcloud-WIN 客户端继续使用，本页面可以关闭。")))
-	})
-	srv := &http.Server{Handler: mux}
-	m.ln = ln
-	m.srv = srv
-	m.done = resCh
+	resCh, cbPath := m.done, m.cbPath
 	m.mu.Unlock()
 
-	go func() { _ = srv.Serve(ln) }()
-
-	callbackURL := fmt.Sprintf("http://127.0.0.1:%d/auth/callback", port)
-	loginURL := strings.TrimRight(domain, "/") + "/#/login?from=win_auth&callback=" + url.QueryEscape(callbackURL)
+	callbackURL := fmt.Sprintf("http://127.0.0.1:%d%s", port, cbPath)
+	// state 参数随 callback 一起发给官网：官网支持原样回传后可在回调里做二次校验
+	secret := strings.TrimPrefix(cbPath, "/auth/callback/")
+	loginURL := strings.TrimRight(domain, "/") + "/#/login?from=win_auth&callback=" + url.QueryEscape(callbackURL) + "&state=" + secret
 
 	if err := openInDefaultBrowser(loginURL); err != nil {
 		a.stopWebLogin()
@@ -180,3 +222,4 @@ func webLoginHTML(msg string) string {
 		`<div style="text-align:center;"><div style="font-size:20px;font-weight:600;margin-bottom:12px;">KNcloud-WIN</div>` +
 		`<div style="font-size:14px;opacity:.8;">` + msg + `</div></div></body></html>`
 }
+

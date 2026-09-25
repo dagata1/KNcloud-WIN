@@ -2,10 +2,10 @@ package main
 
 // KNcloud-WIN.exe --tun-selftest：简易模式（SSTap 方案）链路自检，需管理员运行。
 //
-// 流程：连接 → 校验虚拟网卡/DNS 劫持路由/分流路由 → 经劫持 DNS 解析海外域名
-// （内部走 sing-box DNS 分流 + 代理查询）→ 直拨海外 IP:443（流量被分流路由吸进
-// TUN，能通即证明代理链路工作）→ 断开 → 校验网卡/路由/进程清理回滚。
-// 仅用于验证，不影响正常 UI 使用。
+// 流程：SimpleConnect(true) → 校验虚拟网卡 / DNS 劫持路由 / 分流路由 → 经劫持 DNS
+// 解析海外域名（TUN 内 UDP:53 由 relayDNS 直连公共 DNS）→ 直拨海外 IP:443（流量被
+// 分流路由吸进 TUN，能通即证明 TUN→SOCKS→Xray→节点链路工作）→ SimpleConnect(false)
+// → 校验转发停止、路由回滚、适配器会话回收（进程内适配器保留以备下次秒开）。
 
 import (
 	"context"
@@ -14,8 +14,6 @@ import (
 	"os/exec"
 	"strings"
 	"time"
-
-	"golang.org/x/sys/windows"
 )
 
 func runTunSelfTest(a *App) int {
@@ -65,7 +63,7 @@ func runTunSelfTest(a *App) int {
 		fmt.Printf("[ OK ] IPv6 split route 2000::/3 via TUN (leak protection on)\n")
 	}
 
-	// 2) DNS 劫持链路：系统解析器 → 劫持 DNS → sing-box 分流 → 代理查询
+	// 2) DNS 劫持链路：系统解析器 → 劫持 DNS 路由 → TUN → relayDNS 直连公共 DNS
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	ips, derr := net.DefaultResolver.LookupIPAddr(ctx, "www.google.com")
 	cancel()
@@ -75,7 +73,7 @@ func runTunSelfTest(a *App) int {
 	} else {
 		fmt.Printf("[ OK ] hijacked DNS resolved www.google.com -> %v\n", ips)
 
-		// 3) 海外 TCP：直拨 google IP:443，流量经分流路由进 TUN → sing-box → 代理
+		// 3) 海外 TCP：直拨 google IP:443，流量经分流路由进 TUN → SOCKS → Xray → 节点
 		target := (&net.TCPAddr{IP: ips[0].IP, Port: 443}).String()
 		d := net.Dialer{Timeout: 10 * time.Second}
 		conn, terr := d.Dial("tcp", target)
@@ -88,29 +86,25 @@ func runTunSelfTest(a *App) int {
 		}
 	}
 
-	// 4) 大陆 IP 不被吸进 TUN 的抽查（分流正确性）
-	if cnr, cnOK := bestRouteForIPv4(net.ParseIP("223.5.5.5"), 0); cnOK {
-		if cnr.IfIndex == idx {
-			fmt.Printf("[FAIL] CN IP 223.5.5.5 unexpectedly routed via TUN\n")
-			fail++
-		} else {
-			fmt.Printf("[ OK ] CN IP 223.5.5.5 stays direct (ifIdx=%d)\n", cnr.IfIndex)
+	// 4) 大陆 IP 不被吸进 TUN 的抽查（分流正确性；proxy-cn 策略反之，跳过该抽查）
+	if cnPolicy, perr := policyProxiesCN(a.routingMode); perr != nil || !cnPolicy {
+		if cnr, cnOK := bestRouteForIPv4(net.ParseIP("223.5.5.5"), 0); cnOK {
+			if cnr.IfIndex == idx {
+				fmt.Printf("[FAIL] CN IP 223.5.5.5 unexpectedly routed via TUN\n")
+				fail++
+			} else {
+				fmt.Printf("[ OK ] CN IP 223.5.5.5 stays direct (ifIdx=%d)\n", cnr.IfIndex)
+			}
 		}
 	}
 
-	// 5) 断开 + 清理校验
+	// 5) 断开 + 清理校验：路由回收、状态复位；适配器句柄进程内保留（下次秒开）
 	stopped, serr := a.SimpleConnect(false)
 	if serr != nil || stopped {
 		fmt.Printf("[FAIL] SimpleConnect(stop): err=%v stopped=%v\n", serr, stopped)
 		fail++
 	} else {
 		fmt.Println("[ OK ] SimpleConnect(stop)")
-	}
-	if _, err := net.InterfaceByName(tunIfaceName); err == nil {
-		fmt.Printf("[FAIL] adapter %s still present after stop\n", tunIfaceName)
-		fail++
-	} else {
-		fmt.Printf("[ OK ] adapter %s removed\n", tunIfaceName)
 	}
 	if r2, ok2 := bestRouteForIPv4(net.ParseIP("8.8.8.8"), 0); !ok2 || r2.IfIndex == idx {
 		fmt.Printf("[FAIL] stale route to 8.8.8.8 via ifIdx=%d after stop\n", r2.IfIndex)
@@ -119,13 +113,13 @@ func runTunSelfTest(a *App) int {
 		fmt.Printf("[ OK ] routes restored (8.8.8.8 via ifIdx=%d gw=%v)\n", r2.IfIndex, dwordToIP(r2.NextHop))
 	}
 	a.mu.RLock()
-	singboxGone := a.tunCmd == nil && a.tunJob == 0 && a.tunIfaceIdx == 0 && len(a.tunHostRoutes) == 0
+	clean := !a.tunRunning && a.tunIfaceIdx == 0 && len(a.tunHostRoutes) == 0 && a.tap == nil && a.nativeTunCmd == nil
 	a.mu.RUnlock()
-	if !singboxGone {
+	if !clean {
 		fmt.Printf("[FAIL] TUN state not fully cleaned\n")
 		fail++
 	} else {
-		fmt.Println("[ OK ] TUN state fully cleaned")
+		fmt.Println("[ OK ] TUN state fully cleaned (adapter session kept for fast restart)")
 	}
 
 	fmt.Printf("== self test done: %s ==\n", map[bool]string{true: "PASS", false: "FAIL"}[fail == 0])
@@ -154,5 +148,3 @@ func dumpRouteTable() {
 			dwordToIP(br.NextHop), br.IfIndex, br.Metric1, br.Type)
 	}
 }
-
-var _ = windows.AF_INET

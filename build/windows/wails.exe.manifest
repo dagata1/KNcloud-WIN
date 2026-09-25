@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
     <assemblyIdentity type="win32" name="com.wails.{{.Name}}" version="{{.Info.ProductVersion}}.0" processorArchitecture="*"/>
-    <!-- 简易模式的 TUN 真全局代理需要创建虚拟网卡与修改路由表，必须管理员权限（同 SSTap） -->
+    <!-- asInvoker：普通权限启动，不再每次弹 UAC。TUN 模式需要管理员权限
+         （创建虚拟网卡与修改路由表），在用户开启 TUN 时按需提权重启（elevation_windows.go）。
+         开机自启：管理员会话下注册任务计划（登录静默提权），普通会话下写 Run 键。 -->
     <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
         <security>
             <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
-                <requestedExecutionLevel level="requireAdministrator" uiAccess="false"/>
+                <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
             </requestedPrivileges>
         </security>
     </trustInfo>

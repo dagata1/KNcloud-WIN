@@ -84,14 +84,17 @@ var (
 // 并显式指定绝对路径加载。
 func loadWintunAPI() error {
 	wintunLoaded.Do(func() {
+		writeWintunDLL := func(dst string) error {
+			// 落地文件做完整性校验（SHA-256）：大小相同但内容被篡改/损坏时也要重写
+			if wintunFileMatches(dst) {
+				return nil
+			}
+			return os.WriteFile(dst, wintunDLL, 0644)
+		}
 		exePath, e := os.Executable()
 		if e == nil {
 			dst := filepath.Join(filepath.Dir(exePath), "wintun.dll")
-			if fi, se := os.Stat(dst); se != nil || fi.Size() != int64(len(wintunDLL)) {
-				if we := os.WriteFile(dst, wintunDLL, 0644); we == nil {
-					wintunModPath = dst
-				}
-			} else {
+			if we := writeWintunDLL(dst); we == nil {
 				wintunModPath = dst
 			}
 		}
@@ -102,11 +105,9 @@ func loadWintunAPI() error {
 				return
 			}
 			dst := filepath.Join(cfgDir, "wintun.dll")
-			if fi, se := os.Stat(dst); se != nil || fi.Size() != int64(len(wintunDLL)) {
-				if we := os.WriteFile(dst, wintunDLL, 0644); we != nil {
-					wintunLoadErr = we
-					return
-				}
+			if we := writeWintunDLL(dst); we != nil {
+				wintunLoadErr = we
+				return
 			}
 			wintunModPath = dst
 		}
@@ -147,6 +148,18 @@ func loadWintunAPI() error {
 		wintunProcGetAdapterLUID = pLUID
 	})
 	return wintunLoadErr
+}
+
+// pinnedWintunSHA256 内嵌 wintun.dll（0.14.1 amd64）的期望哈希；更新 wintun 时需同步更新。
+const pinnedWintunSHA256 = "e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce"
+
+// wintunFileMatches 校验落地 wintun.dll 与内嵌副本一致（SHA-256 + 大小）。
+func wintunFileMatches(path string) bool {
+	fi, err := os.Stat(path)
+	if err != nil || fi.Size() != int64(len(wintunDLL)) {
+		return false
+	}
+	return fileSHA256Matches(path, pinnedWintunSHA256)
 }
 
 func wintutCreatePersistentAdapter(name string) (adapter uintptr, err error) {
@@ -224,11 +237,16 @@ func wintunAdapterIfIndex(adapter uintptr) (uint32, error) {
 
 // ------------------------- 常驻适配器管理 -------------------------
 
-// tapPersistentAdapter 常驻适配器（进程生命周期内缓存句柄；适配器本身
-// 长期存在于系统，进程退出也不销毁 —— 与 SSTap 的 TAP-Windows 一致）
+// tapPersistentAdapter 进程内复用的适配器（句柄缓存）。
+//
+// 注意：wintun 0.14 的语义是「WintunCloseAdapter 会删除由 WintunCreateAdapter
+// 创建的适配器」，因此 SSTap 那种「装一次永久常驻」做不到 —— 适配器的真实生命
+// 周期是进程生命周期：进程内开关 TUN 复用句柄（秒级），进程退出后适配器随句柄
+// 关闭被系统移除，下次启动 ensure() 会重新创建（同样是秒级）。
 type tapPersistentAdapter struct {
 	mu      sync.Mutex
-	rx      sync.Mutex // wintun Receive/Release 单线程互斥（0.10 API 无内部锁）
+	rx      sync.Mutex // readLoop 的 Receive/Release 配对互斥（同一时刻只允许一个读者推进）
+	tx      sync.Mutex // WritePackets 的 Allocate/Send 互斥（与 rx 分离，避免转发回调重入自死锁）
 	handle  uintptr
 	session uintptr
 	readEvt windows.Handle
@@ -381,7 +399,13 @@ func (e *tunLinkEndpoint) readLoop(d stack.NetworkDispatcher) {
 				e.adapter.rx.Unlock()
 				break // ERROR_NO_MORE_ITEMS：本轮读完
 			}
-			data := unsafe.Slice((*byte)(unsafe.Pointer(packet)), size)
+			// 先把包内容拷贝出来并立刻 Release —— DeliverNetworkPacket 的处理是同步的，
+			// TCP 转发器可能在同 goroutine 里同步回包（如 RST），若此时还持有 rx 锁，
+			// WritePackets 再取锁就会自死锁（RWMutex 不可重入）。
+			data := append([]byte(nil), unsafe.Slice((*byte)(unsafe.Pointer(packet)), size)...)
+			wintunProcReleaseReceivePacket.Call(session, packet)
+			e.adapter.rx.Unlock()
+
 			proto := tcpip.NetworkProtocolNumber(0)
 			if len(data) >= 1 {
 				switch data[0] >> 4 {
@@ -391,22 +415,24 @@ func (e *tunLinkEndpoint) readLoop(d stack.NetworkDispatcher) {
 					proto = ipv6.ProtocolNumber
 				}
 			}
-			if proto != 0 {
-				v := buffer.NewViewWithData(append([]byte(nil), data...))
-				var buf buffer.Buffer
-				_ = buf.Append(v)
-				pkt := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buf})
-				disp.DeliverNetworkPacket(proto, pkt)
-				pkt.DecRef()
+			if proto == 0 {
+				continue
 			}
-			// 第二参数是包指针（ReceivePacket 的返回值），不是长度
-			wintunProcReleaseReceivePacket.Call(session, packet)
-			e.adapter.rx.Unlock()
+			v := buffer.NewViewWithData(data)
+			var buf buffer.Buffer
+			_ = buf.Append(v)
+			pkt := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buf})
+			disp.DeliverNetworkPacket(proto, pkt)
+			pkt.DecRef()
 		}
 	}
 }
 
-// WritePackets 把 netstack 出站 IP 包写回 wintun 发送环
+// WritePackets 把 netstack 出站 IP 包写回 wintun 发送环。
+// 用独立的 tx 锁而不是 readLoop 的 rx 锁：TCP 转发回调可能在 readLoop 的
+// DeliverNetworkPacket 调用栈内同步写包（RST/ACK），若共享锁必然自死锁。
+// wintun 0.14 的 Receive/Release 与 Allocate/Send 两侧 API 各自线程安全，
+// 收发分锁是安全的。
 func (e *tunLinkEndpoint) WritePackets(pkts stack.PacketBufferList) (int, tcpip.Error) {
 	e.mu.Lock()
 	session := e.adapter.session
@@ -414,8 +440,8 @@ func (e *tunLinkEndpoint) WritePackets(pkts stack.PacketBufferList) (int, tcpip.
 	if session == 0 {
 		return 0, &tcpip.ErrAborted{}
 	}
-	e.adapter.rx.Lock()
-	defer e.adapter.rx.Unlock()
+	e.adapter.tx.Lock()
+	defer e.adapter.tx.Unlock()
 	n := 0
 	for _, pkt := range pkts.AsSlice() {
 		data := pkt.ToView().AsSlice()
@@ -640,6 +666,12 @@ func (a *App) startTapForwarding() error {
 	if err := s.CreateNIC(1, link); err != nil {
 		return fmt.Errorf("gvisor CreateNIC: %v", err)
 	}
+	// 关键：gvisor NIC 没有配置任何 IP 地址，默认只接收「目标地址属于本机」的包，
+	// 而系统路由吸进 TUN 的包目标地址五花八门（公网 IP / DNS 劫持地址 198.18.0.2）。
+	// 不开 Promiscuous 模式所有包都会被丢弃（InvalidDestinationAddressesReceived）。
+	// Spoofing 允许本栈以任意源地址发包（回包源=原目标，NAT 语义需要）。
+	s.SetPromiscuousMode(1, true)
+	s.SetSpoofing(1, true)
 	s.SetRouteTable([]tcpip.Route{
 		{Destination: header.IPv4EmptySubnet, NIC: 1},
 		{Destination: header.IPv6EmptySubnet, NIC: 1},
@@ -995,16 +1027,72 @@ func (a *App) removeTapRouting() {
 
 // ------------------------- 对外开关（替换 sing-box 路径） -------------------------
 
+// tunHealthCheck TUN 启动后的端到端自检：绑定 TUN 网卡发起一次 TCP 连接，
+// 目标 IP 选择「当前策略下必被分流路由吸进 TUN」的地址。TCP 握手能完成即证明
+// 「分流路由 → 转发引擎（gvisor/lwIP）→ SOCKS → Xray → 节点 → 目标」整条链路通畅。
+// 失败由调用方整体回滚，避免「开关显示已连接、实际全部断网」的静默故障。
+func tunHealthCheck(policy string, tunIdx uint32, dialTimeout time.Duration) error {
+	if tunIdx == 0 {
+		return fmt.Errorf("TUN health check: interface index unknown")
+	}
+	target := "1.1.1.1:443" // 非 CN 地址：bypass-cn / global / direct（bypass 语义）策略都进 TUN
+	if cnPolicy, err := policyProxiesCN(policy); err == nil && cnPolicy {
+		target = "223.5.5.5:443" // proxy-cn 类策略只有 CN 网段进 TUN，改用国内目标
+	}
+	dialer := &net.Dialer{Timeout: dialTimeout, Control: bindToIfaceControl(tunIdx)}
+	deadline := time.Now().Add(dialTimeout * 3)
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		conn, err := dialer.Dial("tcp", target)
+		if err == nil {
+			conn.Close()
+			return nil
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(600 * time.Millisecond)
+	}
+	return fmt.Errorf("TUN health check failed: TCP %s not reachable through TUN (%v)", target, lastErr)
+}
+
+// policyProxiesCN 判断策略是否为「仅 CN 网段进 TUN」（proxy-cn 或 Skip=0 的 sstap 规则）。
+func policyProxiesCN(policy string) (bool, error) {
+	if policy == "proxy-cn" {
+		return true, nil
+	}
+	if strings.HasPrefix(policy, "sstap:") {
+		r, err := parseSstapRuleFile(strings.TrimPrefix(policy, "sstap:"))
+		if err != nil {
+			return false, err
+		}
+		return !r.Skip, nil
+	}
+	return false, nil
+}
+
 // SimpleConnect 简易/仪表盘的 TUN 开关：合并架构下 Xray 内核常驻作代理大脑，
 // TUN 只是「抓流量」的开关 —— 全程只动路由表与转发协程，秒级生效。
+// 与系统代理互斥：TUN 开启时关闭系统代理（浏览器流量交由虚拟网卡接管），
+// 关闭时若内核在线则恢复系统代理（回到代理模式）。
 func (a *App) SimpleConnect(start bool) (bool, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	if start {
 		if !isElevated() {
-			a.addLogInternal("error", "TUN mode requires administrator privileges")
-			return a.tunRunning, fmt.Errorf("TUN global proxy requires administrator privileges")
+			// asInvoker 清单：应用以普通权限启动，只在真正需要 TUN 时提权
+			// （UAC 同意后重启自身并自动进入 TUN 模式）。自检模式不弹提权。
+			if selftestMode {
+				a.addLogInternal("error", "TUN mode requires administrator privileges")
+				return a.tunRunning, fmt.Errorf("TUN global proxy requires administrator privileges")
+			}
+			if rerr := relaunchElevatedForTun(a); rerr != nil {
+				a.addLogInternal("error", fmt.Sprintf("TUN elevation: %v", rerr))
+				return a.tunRunning, rerr
+			}
+			return a.tunRunning, errRelaunchRequested
 		}
 		var node *NodeItem
 		for i := range a.nodes {
@@ -1029,22 +1117,31 @@ func (a *App) SimpleConnect(start bool) (bool, error) {
 
 		// Prefer the native C/lwIP tun2socks engine used by SSTap. It consumes the
 		// installed TAP-Windows adapter directly and avoids the Go/gVisor path.
-		if err := a.startNativeTun(*node); err == nil {
+		if nerr := a.startNativeTun(*node); nerr == nil {
 			hostRoutes, nRouted, rtErr := applySstapRoutingWithGateway(*node, a.tunIfaceIdx, a.routingMode, nativeSSTapRouterIP, "")
 			if rtErr != nil {
 				a.stopNativeTun()
 				a.removeTapRouting()
 				return a.tunRunning, fmt.Errorf("SSTap routing setup failed: %v", rtErr)
 			}
+			if hcErr := tunHealthCheck(a.routingMode, a.tunIfaceIdx, 4*time.Second); hcErr != nil {
+				a.addLogInternal("error", hcErr.Error())
+				a.tunSoftStopLocked()
+				return a.tunRunning, fmt.Errorf("native engine started but failed end-to-end check (node unreachable?): %v", hcErr)
+			}
 			a.tunHostRoutes = hostRoutes
 			a.tunRunning = true
+			a.disableSystemProxyForTun()
 			a.addLogInternal("info", fmt.Sprintf("SSTap native engine ready | %d routes | policy %s | node: %s", nRouted, a.routingMode, node.Name))
 			a.savePersisted()
 			tray.requestRebuild()
 			return a.tunRunning, nil
+		} else {
+			// 引擎未安装（发行版只带 exe）或 TAP 适配器缺失：落日志后走内置 gvisor 路径
+			a.addLogInternal("info", fmt.Sprintf("Native tun2socks engine unavailable (%v), using built-in gvisor stack", nerr))
 		}
 
-		// 2) 常驻虚拟网卡（首次创建，之后复用；重启系统后依然存在）
+		// 2) 常驻虚拟网卡（进程内复用句柄；进程退出后适配器随 wintun 语义被移除，下次启动重建）
 		ifIdx, err := knTap.ensure()
 		if err != nil {
 			a.addLogInternal("error", fmt.Sprintf("TUN: adapter error: %v", err))
@@ -1071,22 +1168,55 @@ func (a *App) SimpleConnect(start bool) (bool, error) {
 			a.removeTapRouting()
 			return a.tunRunning, fmt.Errorf("forwarding stack failed: %v", err)
 		}
+		if hcErr := tunHealthCheck(a.routingMode, ifIdx, 4*time.Second); hcErr != nil {
+			a.addLogInternal("error", hcErr.Error())
+			a.tunSoftStopLocked()
+			return a.tunRunning, fmt.Errorf("TUN started but failed end-to-end check (node unreachable?): %v", hcErr)
+		}
 
 		a.tunRunning = true
+		a.disableSystemProxyForTun()
 		a.addLogInternal("info", fmt.Sprintf("TUN interface %s ready | %d routes | policy %s | node: %s | egress: Xray SOCKS",
 			tunIfaceName, nRouted, a.routingMode, node.Name))
 	} else {
-		// 关闭：停转发 + 撤路由；网卡常驻保留，下次开启秒级生效
+		// 关闭：停转发 + 撤路由 + 复位接口索引；适配器句柄进程内保留，下次开启秒级生效
 		a.stopNativeTun()
 		a.stopTapForwarding()
 		a.removeTapRouting()
-		if a.tunRunning {
-			a.tunRunning = false
-			a.addLogInternal("info", "TUN stopped, all traffic back to direct (adapter kept installed)")
-		}
+		wasRunning := a.tunRunning
 		a.tunRunning = false
+		a.tunIfaceIdx = 0
+		if wasRunning {
+			a.addLogInternal("info", "TUN stopped, all traffic back to direct (adapter kept for fast restart)")
+			a.restoreSystemProxyAfterTun()
+		}
 	}
 	a.savePersisted()
 	tray.requestRebuild()
 	return a.tunRunning, nil
+}
+
+// disableSystemProxyForTun TUN 接管后关闭系统代理，避免浏览器流量绕过虚拟网卡。
+func (a *App) disableSystemProxyForTun() {
+	if a.systemProxy {
+		if err := setWindowsSystemProxy(false, ""); err != nil {
+			a.addLogInternal("error", fmt.Sprintf("Failed to disable system proxy for TUN: %v", err))
+			return
+		}
+		a.systemProxy = false
+		a.addLogInternal("info", "System proxy disabled, traffic now taken over by TUN adapter")
+	}
+}
+
+// restoreSystemProxyAfterTun TUN 关闭后恢复代理模式（内核在线时重新挂系统代理）。
+func (a *App) restoreSystemProxyAfterTun() {
+	if !a.systemProxy && a.coreRunning {
+		server := fmt.Sprintf("127.0.0.1:%d", a.settings.HttpPort)
+		if err := setWindowsSystemProxy(true, server); err != nil {
+			a.addLogInternal("error", fmt.Sprintf("Failed to restore system proxy after TUN stop: %v", err))
+			return
+		}
+		a.systemProxy = true
+		a.addLogInternal("info", fmt.Sprintf("System proxy restored -> %s (proxy mode)", server))
+	}
 }
