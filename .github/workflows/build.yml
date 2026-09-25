@@ -40,6 +40,21 @@ jobs:
           cd frontend
           npm ci
 
+      - name: Build Frontend
+        shell: bash
+        run: |
+          cd frontend
+          npm run build
+
+      - name: Vet
+        shell: bash
+        # unsafeptr 关闭：代码里的 Win32 syscall 惯用法（uintptr↔unsafe.Pointer）会触发误报
+        run: go vet -unsafeptr=false ./...
+
+      - name: Test
+        shell: bash
+        run: go test ./... -count=1 -timeout 10m
+
       - name: Build Application with Wails
         shell: bash
         run: |
