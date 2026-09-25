@@ -409,11 +409,18 @@ func (a *App) SelectNode(id string) (NodeItem, error) {
 		}
 	}
 	if a.coreRunning {
-		if err := a.startCoreLocked(); err != nil {
-			a.addLogInternal("error", fmt.Sprintf("Failed to restart core after node switch: %v", err))
-			a.coreRunning = false
-			a.savePersisted()
-			return selected, err
+		// 优先热切换出站：入站监听与累计流量统计得以保留，本机应用和 TUN
+		// 转发不会在切换瞬间被拒连。热切换失败再回退到整体重启。
+		if err := a.hotSwapProxyOutboundLocked(selected); err != nil {
+			a.addLogInternal("warn", fmt.Sprintf("Hot switch unavailable (%v), restarting core", err))
+			if err := a.startCoreLocked(); err != nil {
+				a.addLogInternal("error", fmt.Sprintf("Failed to restart core after node switch: %v", err))
+				a.coreRunning = false
+				a.savePersisted()
+				return selected, err
+			}
+		} else {
+			a.addLogInternal("info", fmt.Sprintf("Switched outbound to [%s] %s without restarting the core", selected.Protocol, selected.Name))
 		}
 	}
 	a.savePersisted()

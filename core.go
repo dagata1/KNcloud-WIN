@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -14,7 +15,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xtls/xray-core/common"
 	xcore "github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/features/outbound"
 	"github.com/xtls/xray-core/features/stats"
 	"github.com/xtls/xray-core/infra/conf/serial"
 
@@ -191,6 +194,11 @@ func (a *App) buildCoreConfigJSON(node NodeItem) (string, error) {
 func adsBlockRule() ruleObj {
 	return ruleObj{Type: "field", Domain: []string{"geosite:category-ads-all"}, OutboundTag: "block"}
 }
+
+// proxyOutboundTag 代理出站在 Xray 配置中的固定 tag。
+// 路由规则按该 tag 指向出站，热切换节点时也按它定位并替换 handler，
+// 因此它必须与 buildProxyOutbound 里写死的 "tag" 保持一致。
+const proxyOutboundTag = "proxy"
 
 // xraySupportedProtocols 是内置 Xray-core 能真正建立出站连接的协议集合。
 //
@@ -517,4 +525,87 @@ func testNodeRealDelay(node NodeItem) int {
 		return -2
 	}
 	return best
+}
+
+// ------------------------- 节点热切换 -------------------------
+
+// errHotSwapUnavailable 表示无法热切换，调用方应回退到整体重启内核。
+var errHotSwapUnavailable = fmt.Errorf("hot swap unavailable")
+
+// hotSwapProxyOutboundLocked 在不重启内核的前提下，把 proxy 出站换成新节点
+// （调用方需持有写锁）。
+//
+// 为什么值得这么做：整体重启内核会连带销毁 SOCKS5/HTTP 入站监听，
+// 于是切换节点期间浏览器与 TUN 转发都会短暂连接被拒；同时 Xray 的流量
+// 统计计数器随实例一起销毁，界面上的累计流量会归零。
+//
+// 换 handler 则只影响代理出站本身：
+//   - 入站监听不动，本机应用与 tapstack 的 SOCKS 连接不受影响；
+//   - 统计计数器按 "outbound>>>proxy>>>traffic>>>*" 命名注册，
+//     Xray 内部用 GetOrRegisterCounter 复用同名计数器，累计流量得以延续；
+//   - 直连出站（direct）上的连接完全不受打扰。
+//
+// 旧节点上已建立的连接会随旧 handler 关闭而中断 —— 这是换节点的应有语义。
+func (a *App) hotSwapProxyOutboundLocked(node NodeItem) error {
+	inst := a.xrayInst
+	if inst == nil {
+		return errHotSwapUnavailable
+	}
+
+	// 1) 先把新出站配置构建出来。放在摘除旧 handler 之前做，
+	//    这样配置有问题时直接返回，现网出站保持原样。
+	proxyOut, err := buildProxyOutbound(node, a.settings.MuxEnabled)
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(map[string]interface{}{
+		"outbounds": []interface{}{proxyOut},
+	})
+	if err != nil {
+		return err
+	}
+	pbCfg, err := serial.DecodeJSONConfig(bytes.NewReader(raw))
+	if err != nil {
+		return fmt.Errorf("failed to parse outbound config: %w", err)
+	}
+	builtCfg, err := pbCfg.Build()
+	if err != nil {
+		return fmt.Errorf("failed to build outbound config: %w", err)
+	}
+	if len(builtCfg.Outbound) == 0 {
+		return errHotSwapUnavailable
+	}
+
+	mgrRaw := inst.GetFeature(outbound.ManagerType())
+	mgr, ok := mgrRaw.(outbound.Manager)
+	if !ok {
+		return errHotSwapUnavailable
+	}
+
+	// 2) 摘除旧 handler。Xray 的 AddHandler 遇到同名 tag 会直接报错，
+	//    所以必须先摘再加；RemoveHandler 只从表里删除、不会关闭 handler，
+	//    因此先取出引用，等新 handler 就位后再由我们关闭。
+	old := mgr.GetHandler(proxyOutboundTag)
+	if err := mgr.RemoveHandler(context.Background(), proxyOutboundTag); err != nil {
+		return fmt.Errorf("failed to detach current outbound: %w", err)
+	}
+
+	// 3) 装入新 handler。失败则把旧 handler 放回去，避免代理出站凭空消失
+	//    （此时 tag 是空的，放回不会冲突）。
+	if err := xcore.AddOutboundHandler(inst, builtCfg.Outbound[0]); err != nil {
+		if old != nil {
+			if reAddErr := mgr.AddHandler(context.Background(), old); reAddErr == nil {
+				return fmt.Errorf("failed to apply new outbound (previous node restored): %w", err)
+			}
+		}
+		// 回滚也失败：代理出站已不可用，交给调用方整体重启内核兜底。
+		return fmt.Errorf("%w: failed to apply new outbound and could not restore the previous one: %v",
+			errHotSwapUnavailable, err)
+	}
+
+	// 4) 关闭旧 handler，释放其 mux 连接（RemoveHandler 不负责这件事）。
+	if old != nil {
+		common.Close(old)
+	}
+	return nil
 }
