@@ -1,6 +1,11 @@
 import { Gauge, Pencil, Plus, RefreshCw, Trash2, Zap } from 'lucide-react';
 
-export default function ServersTab({ deletingSelected, filteredNodes, handleDeleteNode, handleDeleteSelected, handlePingAll, handlePingSelected, handlePingSingleNode, handleSelectNode, isPingingAll, openEditNode, selectedNodeIds, setSelectedNodeIds, setShowAddNodeModal, showToast, switchingNodeId }) {
+export default function ServersTab({ deletingSelected, filteredNodes, handleDeleteNode, handleDeleteSelected, handlePingAll, handlePingSelected, handlePingSingleNode, handleSelectNode, isPingingAll, pingProgress, openEditNode, selectedNodeIds, setSelectedNodeIds, setShowAddNodeModal, showToast, switchingNodeId }) {
+  // 批量测速期间显示实时进度，避免几十秒毫无反馈
+  const pingLabel = pingProgress && pingProgress.total > 0
+    ? `测速中 ${pingProgress.done}/${pingProgress.total}`
+    : '测速中…';
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       <div className="content-header" style={{ marginBottom: '4px' }}>
@@ -26,7 +31,7 @@ export default function ServersTab({ deletingSelected, filteredNodes, handleDele
                 title="真连接测速所有选中的节点（快捷键 Ctrl+R）"
               >
                 <Gauge size={13} className={isPingingAll ? 'spin' : ''} />
-                <span>{isPingingAll ? '测速中…' : `测速选中 (${selectedNodeIds.length})`}</span>
+                <span>{isPingingAll ? pingLabel : `测速选中 (${selectedNodeIds.length})`}</span>
               </button>
               <button
                 className="win11-btn"
@@ -65,7 +70,7 @@ export default function ServersTab({ deletingSelected, filteredNodes, handleDele
                 title="全部节点真连接测速"
               >
                 <Zap size={13} className={isPingingAll ? 'spin' : ''} />
-                <span>{isPingingAll ? '测速中…' : '全部测速'}</span>
+                <span>{isPingingAll ? pingLabel : '全部测速'}</span>
               </button>
             </>
           )}

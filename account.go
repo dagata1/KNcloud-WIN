@@ -28,8 +28,11 @@ type AccountInfo struct {
 	// 而前端从不需要这个凭证 —— 打进 WebView 只会平白扩大泄露面。
 	// 持久化不受影响：token 由 persistedConfig.AccountToken 单独存取（见 config.go）。
 	AuthToken string `json:"-"`
-	SubURL    string `json:"subUrl"`
-	SubID     string `json:"subId"` // 关联的订阅 ID
+	// SubURL 是订阅地址，内含 token —— 拿到即可取回该账户的全部节点，
+	// 敏感度与登录凭证相当，因此同样不下发前端（前端从不使用它）。
+	// 持久化由 persistedConfig.AccountSubURL 单独加密存取（见 config.go）。
+	SubURL string `json:"-"`
+	SubID  string `json:"subId"` // 关联的订阅 ID
 }
 
 func defaultAccount() AccountInfo {

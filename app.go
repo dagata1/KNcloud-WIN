@@ -50,9 +50,11 @@ type NodeItem struct {
 }
 
 type SubscriptionItem struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	URL       string `json:"url"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// URL 内含订阅 token，与登录凭证同级敏感，不下发前端（前端只读列表、
+	// 从不使用该字段）。持久化由 persistedConfig.SubscriptionURLs 加密存取。
+	URL       string `json:"-"`
 	NodeCount int    `json:"nodeCount"`
 	UpdatedAt string `json:"updatedAt"`
 	AutoCheck bool   `json:"autoCheck"`

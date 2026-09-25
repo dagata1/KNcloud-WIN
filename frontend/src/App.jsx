@@ -167,6 +167,9 @@ export default function App() {
   const [importText, setImportText] = useState('');
 
   // 账户
+  // 批量测速进度：done/total，total 为 0 表示当前没有批量任务在跑
+  const [pingProgress, setPingProgress] = useState({ done: 0, total: 0 });
+
   const [account, setAccount] = useState(null); // null = 尚未从后端加载
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
   const [loginErr, setLoginErr] = useState('');
@@ -200,6 +203,15 @@ export default function App() {
     </div>
   );
 
+  // 导入后提示有多少节点当前内核连不上（主要是 Hysteria2）。
+  // 后端只写日志，用户不会去翻；不在这里说清楚，他们会等到点击连接才发现。
+  const warnUnsupported = (list) => {
+    const n = (list || []).filter(x => x.unsupported).length;
+    if (n > 0) {
+      showToast(`其中 ${n} 个节点当前无法使用：内置内核不支持其协议`, 'warn');
+    }
+  };
+
   // Load initial data
   useEffect(() => {
     refreshAllData();
@@ -213,6 +225,22 @@ export default function App() {
   useEffect(() => {
     const off = EventsOn('kncloud:refresh', () => {
       refreshAllData();
+    });
+    return () => {
+      if (typeof off === 'function') off();
+    };
+  }, []);
+
+  // 测速结果逐节点推送：后端每测完一个就发一次事件。
+  // 批量测速最多 3 个并发，几十个节点要跑十几轮；若等全部结束再一次性刷新，
+  // 界面会几十秒毫无反应，看起来像卡死。
+  useEffect(() => {
+    const off = EventsOn('kncloud:node-delay', (payload) => {
+      if (!payload || !payload.id) return;
+      setNodes(prev => prev.map(n =>
+        n.id === payload.id ? { ...n, delay: payload.delay } : n
+      ));
+      setPingProgress(p => (p.total > 0 ? { ...p, done: p.done + 1 } : p));
     });
     return () => {
       if (typeof off === 'function') off();
@@ -539,6 +567,7 @@ export default function App() {
     if (selectedNodeIds.length > 1) {
       pingingActiveRef.current = true;
       setIsPingingAll(true);
+      setPingProgress({ done: 0, total: selectedNodeIds.length });
       showToast(`正在对选中的 ${selectedNodeIds.length} 个节点进行真连接测速…`, "info");
       try {
         const res = await PingNodes(selectedNodeIds);
@@ -548,6 +577,7 @@ export default function App() {
         showToast("批量测速失败：" + (err?.message || err), "error");
       } finally {
         setIsPingingAll(false);
+        setPingProgress({ done: 0, total: 0 });
         pingingActiveRef.current = false;
       }
       return;
@@ -636,8 +666,10 @@ export default function App() {
         try {
           const count = await ImportNodesFromClipboard();
           if (count > 0) {
-            setNodes(await GetNodes());
+            const list = await GetNodes();
+            setNodes(list);
             showToast(`已从剪贴板导入 ${count} 个节点`, "success");
+            warnUnsupported(list);
           }
         } catch (err) {
           showToast("导入失败：" + (err?.message || err), "error");
@@ -649,10 +681,18 @@ export default function App() {
   });
 
   const handlePingAll = async () => {
+    if (isPingingAll) return;
     setIsPingingAll(true);
-    const res = await PingAllNodes();
-    setNodes(res);
-    setIsPingingAll(false);
+    setPingProgress({ done: 0, total: nodes.length });
+    try {
+      const res = await PingAllNodes();
+      setNodes(res);
+    } catch (e) {
+      showToast('测速失败：' + (e?.message || e), 'error');
+    } finally {
+      setIsPingingAll(false);
+      setPingProgress({ done: 0, total: 0 });
+    }
   };
 
   const handleDeleteNode = async (id, e) => {
@@ -737,9 +777,11 @@ export default function App() {
       const count = await ImportNodesFromLinks(importText);
       setShowImportModal(false);
       setImportText('');
-      setNodes(await GetNodes());
+      const list = await GetNodes();
+      setNodes(list);
       setActiveTab('servers');
       showToast('成功导入 ' + count + ' 个节点！', 'success');
+      warnUnsupported(list);
     } catch (e) {
       showToast('导入失败：' + (e?.message || e), 'error');
     }
@@ -877,7 +919,7 @@ export default function App() {
 
           {/* TAB 2: SERVERS (NODES) */}
           {activeTab === 'servers' && (
-            <ServersTab deletingSelected={deletingSelected} filteredNodes={filteredNodes} handleDeleteNode={handleDeleteNode} handleDeleteSelected={handleDeleteSelected} handlePingAll={handlePingAll} handlePingSelected={handlePingSelected} handlePingSingleNode={handlePingSingleNode} handleSelectNode={handleSelectNode} isPingingAll={isPingingAll} openEditNode={openEditNode} selectedNodeIds={selectedNodeIds} setSelectedNodeIds={setSelectedNodeIds} setShowAddNodeModal={setShowAddNodeModal} showToast={showToast} switchingNodeId={switchingNodeId} />
+            <ServersTab deletingSelected={deletingSelected} filteredNodes={filteredNodes} handleDeleteNode={handleDeleteNode} handleDeleteSelected={handleDeleteSelected} handlePingAll={handlePingAll} handlePingSelected={handlePingSelected} handlePingSingleNode={handlePingSingleNode} handleSelectNode={handleSelectNode} isPingingAll={isPingingAll} pingProgress={pingProgress} openEditNode={openEditNode} selectedNodeIds={selectedNodeIds} setSelectedNodeIds={setSelectedNodeIds} setShowAddNodeModal={setShowAddNodeModal} showToast={showToast} switchingNodeId={switchingNodeId} />
           )}
 
           {/* TAB 3: ROUTING */}

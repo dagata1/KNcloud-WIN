@@ -189,8 +189,19 @@ TUN 生效后若不加处理，Xray 自己发往节点服务器的加密流量�
 
 ### 3.9 凭证加密存储
 
-登录凭证以 Windows DPAPI 加密后写入 `config.json`（`credstore.go` 负责编码与
-迁移，`dpapi_windows.go` 负责系统调用）。
+三类凭证均以 Windows DPAPI 加密后写入 `config.json`（`credstore.go` 负责编码与
+迁移，`dpapi_windows.go` 负责系统调用）：
+
+| 凭证 | 落盘字段 | 说明 |
+|---|---|---|
+| 登录 token | `accountToken` | V2Board 会话凭证 |
+| 账户订阅地址 | `accountSubUrl` | 内含 token，拿到即可取回全部节点 |
+| 订阅列表地址 | `subscriptionUrls`（按订阅 ID） | 同上；与账户订阅地址常是同一串 |
+
+三者一并处理是必要的：账户订阅地址会被复制进 `subscriptions[].url`，
+只加密其中一处，另一处仍是明文，等于没加密。
+
+这三个字段同时都带 `json:"-"`，不再下发前端（前端从不使用它们）。
 
 选 DPAPI 而非自带密钥的对称加密：本地软件无处安放密钥，密钥与密文一起躺在
 磁盘上，加密就退化成编码。DPAPI 的密钥由 Windows 按当前用户账户派生并保管。
@@ -205,7 +216,15 @@ TUN 生效后若不加处理，Xray 自己发往节点服务器的加密流量�
 代价是密文绑定「这台机器上的这个 Windows 用户」，配置文件无法跨机迁移 ——
 对登录凭证而言这正是期望行为。
 
-### 3.10 前端结构
+### 3.10 测速结果流式推送
+
+`PingNode` 每测完一个节点就发一次 `kncloud:node-delay` 事件，前端据此逐个更新
+延迟并显示 `测速中 7/23` 进度。
+
+批量测速最多 3 个并发，几十个节点要跑十几轮；此前前端不监听该事件、只等批量
+调用整体返回，界面会几十秒毫无反应，看起来像卡死 —— 后端的推送能力一直是白建的。
+
+### 3.11 前端结构
 
 `frontend/src/App.jsx` 保留状态管理与副作用，视图拆分为 7 个纯展示组件
 （`components/LoginView`、`components/SimpleView`、`components/tabs/*`），
@@ -255,10 +274,7 @@ UI 与拦截逻辑无需改动（`Unsupported` 是实时计算的，老配置文
 
 ### 4.2 其它
 
-- **流式延迟推送**：`PingNodes` 目前是批量并发测速后统一返回，非逐节点流式推送
 - **TCP 快速回收 / 连接级统计**：当前统计基于内核 stats 计数器，无单连接粒度
-- **订阅链接同样是凭证**：`AccountInfo.SubURL` 内含 token，目前仍明文持久化。
-  其敏感度与登录凭证相当（拿到即可取回全部节点），尚未纳入 3.9 的加密范围
 
 ---
 
@@ -301,13 +317,14 @@ UI 与拦截逻辑无需改动（`Unsupported` 是实时计算的，老配置文
 | 文件 | 行数 | 职责 |
 |---|---|---|
 | `tapstack.go` | 1061 | wintun 适配器 + gVisor 栈 + TCP/UDP/DNS 转发（TUN 唯一实现） |
-| `app.go` | 1200 | `App` 结构体、Wails 绑定方法、节点/订阅/设置/生命周期 |
+| `app.go` | 1202 | `App` 结构体、Wails 绑定方法、节点/订阅/设置/生命周期 |
 | `tun.go` | 544 | Windows 路由表操作、`applySstapRouting`、IPv6 路由 |
 | `core.go` | 611 | Xray-core 嵌入、配置生成、geo 资源、真连接测速、出站热切换 |
 | `sstap.go` | 162 | 分流策略引擎、SSTap `.rules` 解析（纯函数） |
+| `config.go` | 303 | 配置持久化、凭证加解密接入、旧版迁移 |
 | `credstore.go` | 62 | 凭证加解密的编码与迁移（跨平台） |
 | `dpapi_windows.go` | 132 | DPAPI 系统调用封装 |
-| `frontend/src/App.jsx` | 1017 | 前端状态管理与副作用（视图已拆分至 components/） |
+| `frontend/src/App.jsx` | 1059 | 前端状态管理与副作用（视图已拆分至 components/） |
 
 > `tun.go` 中的 sing-box 子进程链路（启停、Job 对象、pnputil 设备清理、
 > 配置生成，共 715 行）已整体删除，其职责由 `tapstack.go` 承担。

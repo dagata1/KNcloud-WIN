@@ -1055,6 +1055,7 @@ select.win11-input option {
 .toast-success { border-left: 3px solid #107c41; }
 .toast-error { border-left: 3px solid #f85149; }
 .toast-info { border-left: 3px solid var(--accent, #0067c0); }
+.toast-warn { border-left: 3px solid #d29922; }
 
 .dark-theme .toast {
   color: #f0f0f0;
