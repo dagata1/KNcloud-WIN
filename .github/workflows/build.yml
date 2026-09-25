@@ -5,6 +5,9 @@ on:
     branches: [ main ]
     tags:
       - 'v*'
+  # PR 同样跑一遍：Windows 专属代码（DPAPI、Wintun、路由表）无法在
+  # 其它平台编译验证，合并前必须有一次真实的 windows-latest 构建与测试。
+  pull_request:
   workflow_dispatch:
 
 jobs:
