@@ -26,8 +26,11 @@
 - Windows 10/11（WebView2 运行时随系统分发；TUN 模式需管理员权限）
 
 ```bash
-wails build        # 产物位于 build/bin/KNcloud-WIN.exe
+wails build                                   # 产物位于 build/bin/KNcloud-WIN.exe
+wails build -platform windows/amd64 -nsis     # 额外产出 NSIS 安装器（*installer.exe）
 ```
+
+CI（GitHub Actions）每次构建都会同时产出绿色版 exe 与 NSIS 安装器，打 `v*` tag 时自动附到 Release。
 
 开发模式：`wails dev`（前端热更新，Go 方法可在 http://localhost:34115 调试）。
 

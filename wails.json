@@ -9,6 +9,13 @@
   "postBuildHooks": {
     "windows/*": "go run ../../tools/syncbuild ${bin}"
   },
+  "info": {
+    "productName": "KNcloud",
+    "productVersion": "1.4.0",
+    "companyName": "KNcloud",
+    "copyright": "Copyright © 2026 KNcloud",
+    "comments": "KNcloud Windows 客户端 —— Wails + Xray-core"
+  },
   "author": {
     "name": "",
     "email": ""

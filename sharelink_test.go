@@ -151,3 +151,28 @@ func TestShareLink(t *testing.T) {
 		t.Fatalf("b64 sub expected 4 nodes, got %d", len(nodes))
 	}
 }
+
+// TestIsInfoPseudoNode 机场"流量信息/套餐到期"伪节点过滤。
+func TestIsInfoPseudoNode(t *testing.T) {
+	cases := []struct {
+		name string
+		node NodeItem
+		want bool
+	}{
+		{"normal", NodeItem{Name: "JP-01", Address: "jp.example"}, false},
+		{"traffic", NodeItem{Name: "剩余流量：10GB", Address: "1.2.3.4"}, true},
+		{"expire", NodeItem{Name: "套餐到期：2026-12-31", Address: "1.2.3.4"}, true},
+		{"reset", NodeItem{Name: "流量重置提醒", Address: "1.2.3.4"}, true},
+		{"website", NodeItem{Name: "官网 example.top", Address: "1.2.3.4"}, true},
+		{"group", NodeItem{Name: "交流群", Address: "1.2.3.4"}, true},
+		{"loopback", NodeItem{Name: "x", Address: "127.0.0.1"}, true},
+		{"localhost", NodeItem{Name: "x", Address: "localhost"}, true},
+		{"ipv6loopback", NodeItem{Name: "x", Address: "::1"}, true},
+		{"anyaddr", NodeItem{Name: "x", Address: "0.0.0.0"}, true},
+	}
+	for _, c := range cases {
+		if got := isInfoPseudoNode(c.node); got != c.want {
+			t.Errorf("%s: isInfoPseudoNode=%v want %v", c.name, got, c.want)
+		}
+	}
+}

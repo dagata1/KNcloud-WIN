@@ -105,14 +105,17 @@ jobs:
 
       - name: Build Application with Wails
         shell: bash
+        # -nsis 同时产出 NSIS 安装器（wails 自动下载 NSIS 工具链）
         run: |
-          wails build -platform windows/amd64 -clean
+          wails build -platform windows/amd64 -clean -nsis
 
       - name: Rename & Stage Binary
         shell: bash
         run: |
           mkdir -p dist
           cp build/bin/KNcloud-WIN.exe dist/ || cp build/bin/*.exe dist/
+          cp build/bin/*-installer.exe dist/ 2>/dev/null && echo "NSIS installer staged" || echo "WARN: no installer produced"
+          ls -la dist/
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4

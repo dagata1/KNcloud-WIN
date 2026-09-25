@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"net/http"
 	"os"
 
 	"github.com/wailsapp/wails/v2"
@@ -46,6 +47,18 @@ func main() {
 		Frameless: true, // 自定义 Win11 沉浸式标题栏
 		AssetServer: &assetserver.Options{
 			Assets: assets,
+			// 本地资源安全响应头：防 MIME 嗅探、防被嵌入 iframe、防引用泄露。
+			// 特意不加 CSP：Wails 运行时 IPC 依赖同源脚本，策略过严会把窗口打成白屏，
+			// 收益远小于风险，先以无副作用的三个头为限。
+			Middleware: func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					h := w.Header()
+					h.Set("X-Content-Type-Options", "nosniff")
+					h.Set("X-Frame-Options", "DENY")
+					h.Set("Referrer-Policy", "no-referrer")
+					next.ServeHTTP(w, r)
+				})
+			},
 		},
 		BackgroundColour: &options.RGBA{R: 243, G: 243, B: 243, A: 0}, // 透明底色配合 Mica
 		OnStartup:        app.startup,

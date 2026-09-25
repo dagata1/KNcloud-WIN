@@ -331,7 +331,7 @@ func isInfoPseudoNode(n NodeItem) bool {
 		return true
 	}
 	name := n.Name
-	for _, kw := range []string{"流量", "到期", "过期", "剩余", "官网", "套餐", "重置", "发布", "群", "官网"} {
+	for _, kw := range []string{"流量", "到期", "过期", "剩余", "官网", "套餐", "重置", "发布", "群"} {
 		if strings.Contains(name, kw) {
 			return true
 		}
