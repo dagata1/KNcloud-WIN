@@ -227,7 +227,21 @@ TUN 生效后若不加处理，Xray 自己发往节点服务器的加密流量�
 代价是密文绑定「这台机器上的这个 Windows 用户」，配置文件无法跨机迁移 ——
 对登录凭证而言这正是期望行为。
 
-### 3.10 测速结果流式推送
+### 3.10 网页登录回调的安全模型
+
+网页授权时客户端在 `127.0.0.1` 随机端口起一次性回调服务。这里有个容易被忽略的
+前提：**浏览器里任何网页都能向 `127.0.0.1` 发起跨源子资源请求**（`<img>`/`<script>`
+不受同源策略阻拦，只是读不到响应 —— 而本接口的副作用是登录，不需要读响应）。
+
+端口只有约 16 bit 熵，恶意页面几千个 `<img>` 即可喷完。命中后客户端会登入
+攻击者账户并导入其订阅节点，用户之后的全部流量都经由攻击者服务器。
+
+因此回调地址形如 `/auth/callback/<128 bit 随机秘密>`，只有拿到授权 URL 的官网
+知道；比较用 `subtle.ConstantTimeCompare`。另外拒绝 `Sec-Fetch-Dest` 为
+`image`/`script`/`style` 等子资源的请求 —— 真实回调是一次顶层导航，永远不会是
+这些值，秘密万一泄漏仍挡得住喷射。
+
+### 3.11 测速结果流式推送
 
 `PingNode` 每测完一个节点就发一次 `kncloud:node-delay` 事件，前端据此逐个更新
 延迟并显示 `测速中 7/23` 进度。
@@ -235,7 +249,7 @@ TUN 生效后若不加处理，Xray 自己发往节点服务器的加密流量�
 批量测速最多 3 个并发，几十个节点要跑十几轮；此前前端不监听该事件、只等批量
 调用整体返回，界面会几十秒毫无反应，看起来像卡死 —— 后端的推送能力一直是白建的。
 
-### 3.11 前端结构
+### 3.12 前端结构
 
 `frontend/src/App.jsx` 保留状态管理与副作用，视图拆分为 7 个纯展示组件
 （`components/LoginView`、`components/SimpleView`、`components/tabs/*`），
@@ -335,7 +349,8 @@ UI 与拦截逻辑无需改动（`Unsupported` 是实时计算的，老配置文
 | ss-tap / tun2socks | gVisor netstack 用户态栈 | `tapstack.go:624` |
 | ss-local 隧道 | Xray-core 出站（现代协议） | `core.go` |
 | unbound DNS | gVisor 拦截 53 → 物理网卡直连公共 DNS | `tapstack.go:810` |
-| `.rules` 规则文件 | 原生解析，直接兼容 | `sstap.go` |
+| `.rules` 规则文件 | 原生解析，直接兼容 | `sharelink.go` | 381 | 分享链接与订阅内容解析（输入不可信） |
+| `sstap.go` |
 | 路由表分流 | Windows MIB API | `tun.go:399` |
 
 ---
@@ -350,6 +365,7 @@ UI 与拦截逻辑无需改动（`Unsupported` 是实时计算的，老配置文
 | `core.go` | 652 | Xray-core 嵌入、配置生成、geo 资源、真连接测速、出站热切换 |
 | `sstap.go` | 162 | 分流策略引擎、SSTap `.rules` 解析（纯函数） |
 | `config.go` | 303 | 配置持久化、凭证加解密接入、旧版迁移 |
+| `weblogin.go` | 265 | 网页授权登录与本地一次性回调服务 |
 | `credstore.go` | 62 | 凭证加解密的编码与迁移（跨平台） |
 | `dpapi_windows.go` | 132 | DPAPI 系统调用封装 |
 | `frontend/src/App.jsx` | 1091 | 前端状态管理与副作用（视图已拆分至 components/） |
