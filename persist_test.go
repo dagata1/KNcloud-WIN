@@ -171,7 +171,9 @@ func TestPersistedSaveLoadRoundTrip(t *testing.T) {
 		activeNodeID:    "x1",
 		totalUpBytes:    9,
 		totalDownBytes:  99,
-		lastSystemProxy: true,
+		// 注意耦合：savePersisted 落盘的是 systemProxy（退出时的实际状态），
+		// 加载后读进 lastSystemProxy（用于崩溃残留识别）——两者在真实使用中同步变化
+		systemProxy: true,
 	}
 	src.savePersisted()
 
@@ -188,8 +190,12 @@ func TestPersistedSaveLoadRoundTrip(t *testing.T) {
 	if dst.settings != src.settings {
 		t.Fatalf("settings roundtrip:\n got %+v\nwant %+v", dst.settings, src.settings)
 	}
-	if dst.totalUpBytes != 9 || dst.totalDownBytes != 99 || !dst.lastSystemProxy {
-		t.Fatalf("totals/proxy roundtrip: %d %d %v", dst.totalUpBytes, dst.totalDownBytes, dst.lastSystemProxy)
+	if dst.totalUpBytes != 9 || dst.totalDownBytes != 99 {
+		t.Fatalf("totals roundtrip: %d %d", dst.totalUpBytes, dst.totalDownBytes)
+	}
+	// 落盘的是 systemProxy，加载后成为 lastSystemProxy
+	if !dst.lastSystemProxy {
+		t.Fatalf("lastSystemProxy should be restored from saved systemProxy")
 	}
 }
 
