@@ -111,8 +111,12 @@ jobs:
 
       - name: Build Application with Wails
         shell: bash
-        # -nsis 同时产出 NSIS 安装器
+        # -nsis 同时产出 NSIS 安装器。
+        # 注意：choco 安装 NSIS 改的是注册表 PATH，本 step 继承的是 job 启动时的旧 PATH，
+        # wails 找不到 makensis 会静默跳过安装器（只打 warning）——这里显式补上安装目录。
         run: |
+          export PATH="/c/Program Files (x86)/NSIS:$PATH"
+          command -v makensis && echo "makensis available"
           wails build -platform windows/amd64 -clean -nsis
 
       - name: Rename & Stage Binary
