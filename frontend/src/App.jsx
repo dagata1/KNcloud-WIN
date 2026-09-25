@@ -205,6 +205,20 @@ export default function App() {
 
   // 导入后提示有多少节点当前内核连不上（主要是 Hysteria2）。
   // 后端只写日志，用户不会去翻；不在这里说清楚，他们会等到点击连接才发现。
+  // 主操作完成后回读真实状态。这些 getter 极少失败，但一旦失败不应抛出
+  // 未处理的 Promise 拒绝 —— 2 秒一次的轮询会把状态补回来。
+  const refreshStatus = async () => {
+    try {
+      setStatus(await GetCoreStatus());
+    } catch { /* 交给轮询兜底 */ }
+  };
+  const refreshNodesAndStatus = async () => {
+    try {
+      setNodes(await GetNodes());
+      setStatus(await GetCoreStatus());
+    } catch { /* 交给轮询兜底 */ }
+  };
+
   const warnUnsupported = (list) => {
     const n = (list || []).filter(x => x.unsupported).length;
     if (n > 0) {
@@ -305,8 +319,7 @@ export default function App() {
     } catch (e) {
       showToast('内核启动失败：' + (e?.message || e), 'error');
     }
-    const updated = await GetCoreStatus();
-    setStatus(updated);
+    await refreshStatus();
   };
 
   const handleThemeToggle = async () => {
@@ -343,7 +356,7 @@ export default function App() {
     } catch (e) {
       showToast(String(e?.message || e).replace(/^.*?: /, ''), 'error');
     }
-    setStatus(await GetCoreStatus());
+    await refreshStatus();
   };
 
   const handleLogin = async () => {
@@ -451,8 +464,7 @@ export default function App() {
     } catch (e) {
       showToast('切换节点失败：' + (e?.message || e), 'error');
     }
-    setNodes(await GetNodes());
-    setStatus(await GetCoreStatus());
+    await refreshNodesAndStatus();
   };
 
   // 简易模式节点可用性自动检测：PingNode 在后端起临时内核，经该节点真实请求
@@ -507,9 +519,17 @@ export default function App() {
   };
 
   const handleRoutingChange = async (mode) => {
-    await SetRoutingMode(mode);
-    const updated = await GetCoreStatus();
-    setStatus(updated);
+    // 切换分流模式会重铺路由、必要时重启内核，失败不提示的话用户只会看到
+    // 「点了没反应」。
+    try {
+      await SetRoutingMode(mode);
+    } catch (e) {
+      showToast('切换分流模式失败：' + (e?.message || e), 'error');
+    }
+    // 无论成败都回读一次真实状态，避免界面停留在错误的模式上
+    try {
+      setStatus(await GetCoreStatus());
+    } catch { /* 状态回读失败由下一次轮询兜底 */ }
   };
 
   const handleSelectNode = async (id) => {
@@ -554,9 +574,12 @@ export default function App() {
 
   const handlePingSingleNode = async (id, e) => {
     e.stopPropagation();
-    await PingNode(id);
-    const updatedNodes = await GetNodes();
-    setNodes(updatedNodes);
+    try {
+      await PingNode(id);
+      setNodes(await GetNodes());
+    } catch (err) {
+      showToast('测速失败：' + (err?.message || err), 'error');
+    }
   };
 
   // Ctrl+R：真连接测速（多选时批量测速所有选中节点；单选或未选时测速当前节点）
@@ -697,9 +720,13 @@ export default function App() {
 
   const handleDeleteNode = async (id, e) => {
     e.stopPropagation();
-    await DeleteNode(id);
-    const updatedNodes = await GetNodes();
-    setNodes(updatedNodes);
+    // 删除的若是当前活动节点，后端会重启内核，这一步是可能失败的
+    try {
+      await DeleteNode(id);
+      setNodes(await GetNodes());
+    } catch (err) {
+      showToast('删除节点失败：' + (err?.message || err), 'error');
+    }
   };
 
   // 批量删除选中节点。后端 DeleteNodes 一次性处理整批（只重启一次内核、
@@ -765,8 +792,7 @@ export default function App() {
     }
     setShowAddNodeModal(false);
     resetNodeForm();
-    const updatedNodes = await GetNodes();
-    setNodes(updatedNodes);
+    await refreshNodesAndStatus();
   };
 
 
@@ -788,8 +814,14 @@ export default function App() {
   };
 
   const handleSaveSettings = async () => {
-    await SaveSettings(settings);
-    showToast('首选项已成功保存！', 'success');
+    // 后端会校验端口等输入并可能返回错误；不捕获的话，保存失败也会弹
+    // 「保存成功」，用户以为改动生效了。
+    try {
+      await SaveSettings(settings);
+      showToast('首选项已成功保存！', 'success');
+    } catch (e) {
+      showToast('保存失败：' + (e?.message || e), 'error');
+    }
   };
 
   // Filtered nodes

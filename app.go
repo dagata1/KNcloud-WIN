@@ -1023,6 +1023,12 @@ func (a *App) SaveSettings(settings AppSettings) error {
 	if settings.HttpPort <= 0 || settings.HttpPort > 65535 {
 		settings.HttpPort = old.HttpPort
 	}
+	// 两个端口相同时，顺序执行的端口占用预检发现不了（各自 listen 后立即
+	// close，都能成功），要等 Xray 绑定第二个监听才失败，报错还很晦涩。
+	// 在这里挡住并说清楚。
+	if settings.SocksPort == settings.HttpPort {
+		return fmt.Errorf("SOCKS5 与 HTTP 端口不能相同（当前都是 %d），请改用不同端口", settings.SocksPort)
+	}
 	if settings.Theme == "" {
 		settings.Theme = old.Theme
 	}

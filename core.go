@@ -338,6 +338,12 @@ func (a *App) startCoreLocked() error {
 	}
 	os.Setenv("xray.location.asset", assetDir)
 
+	if a.settings.SocksPort == a.settings.HttpPort {
+		// 正常路径由 SaveSettings 挡住；手工改过配置文件仍可能出现，
+		// 这里兜一道，否则报错会来自内核绑定失败，难以定位。
+		return fmt.Errorf("SOCKS5 与 HTTP 端口不能相同（当前都是 %d），请在首选项中改用不同端口", a.settings.SocksPort)
+	}
+
 	// 端口占用预检，给出比内核原始报错更明确的提示
 	preListen := "127.0.0.1"
 	if a.settings.AllowLan {
