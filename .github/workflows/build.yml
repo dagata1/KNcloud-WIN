@@ -59,11 +59,11 @@ jobs:
       - name: Vet diagnostics
         if: failure()
         shell: bash
-        # 失败时把 vet 输出转成 ::error:: 注解（日志 zip 之外的可读通道）
+        # 失败时把 vet 输出浓缩成单条 ::error:: 注解（注解有 10 条上限，
+        # 逐行输出会被 go: downloading 刷掉；日志 zip 又下载不了时靠这条读错误）
         run: |
-          while IFS= read -r line; do
-            echo "::error::${line:0:4000}"
-          done < vet-output.log
+          { echo "=== vet tail ==="; grep -v "^go: downloading" vet-output.log | tail -40; } > diag.txt
+          echo "::error::$(sed ':a;N;$!ba;s/\n/%0A/g' diag.txt)"
 
       - name: Test
         shell: bash
@@ -75,9 +75,8 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          while IFS= read -r line; do
-            echo "::error::${line:0:4000}"
-          done < test-output.log
+          { echo "=== test tail ==="; grep -v "^go: downloading" test-output.log | tail -40; } > diag.txt
+          echo "::error::$(sed ':a;N;$!ba;s/\n/%0A/g' diag.txt)"
 
       - name: Build Application with Wails
         shell: bash
