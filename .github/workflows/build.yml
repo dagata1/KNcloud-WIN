@@ -21,7 +21,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          # xray-core v26.3.27 要求 go >= 1.26
+          go-version: '1.26'
           cache: true
 
       - name: Setup Node.js

@@ -323,6 +323,7 @@ type tunLinkEndpoint struct {
 	dispatcher stack.NetworkDispatcher
 	stopped    sync.WaitGroup
 	mu         sync.Mutex
+	onClose    func()
 }
 
 func (e *tunLinkEndpoint) MTU() uint32                        { return e.mtu }
@@ -348,6 +349,24 @@ func (e *tunLinkEndpoint) IsAttached() bool {
 	return e.dispatcher != nil
 }
 func (e *tunLinkEndpoint) Wait() {}
+
+// onClose 保存协议栈注册的回调（新 gVisor LinkEndpoint 约定：
+// RemoveNIC/Destroy 时栈调用 Close()，Close 须执行 SetOnCloseAction 注册的回调）。
+func (e *tunLinkEndpoint) SetOnCloseAction(f func()) {
+	e.mu.Lock()
+	e.onClose = f
+	e.mu.Unlock()
+}
+
+func (e *tunLinkEndpoint) Close() {
+	e.mu.Lock()
+	f := e.onClose
+	e.onClose = nil
+	e.mu.Unlock()
+	if f != nil {
+		f()
+	}
+}
 
 // ARPHardwareType / AddHeader / ParseHeader：TUN 无链路层头，均为空实现
 func (e *tunLinkEndpoint) ARPHardwareType() header.ARPHardwareType {
@@ -725,17 +744,18 @@ func (a *App) startTapForwarding() error {
 	s.SetTransportProtocolHandler(tcp.ProtocolNumber, tcpFwd.HandlePacket)
 
 	// UDP：DNS（53）走物理直连防污染；其余走 SOCKS5 UDP ASSOCIATE
-	udpFwd := udp.NewForwarder(s, func(r *udp.ForwarderRequest) {
+	// （新 gVisor：ForwarderHandler 返回 bool，true=已处理；false=回 ICMP 不可达）
+	udpFwd := udp.NewForwarder(s, func(r *udp.ForwarderRequest) bool {
 		id := r.ID()
 		var wq waiter.Queue
 		ep, uerr := r.CreateEndpoint(&wq)
 		if uerr != nil {
-			return
+			return false // 端点创建失败：协议栈回 ICMP 端口不可达
 		}
 		f.wg.Add(1)
 		go func() {
 			defer f.wg.Done()
-			pc := gonet.NewUDPConn(s, &wq, ep)
+			pc := gonet.NewUDPConn(&wq, ep)
 			dst := &net.UDPAddr{IP: addrToNetIP(id.LocalAddress), Port: int(id.LocalPort)}
 			if dst.Port == 53 {
 				f.relayDNS(pc, dst)
@@ -743,6 +763,7 @@ func (a *App) startTapForwarding() error {
 			}
 			f.relayUDPSocks(pc, dst)
 		}()
+		return true
 	})
 	s.SetTransportProtocolHandler(udp.ProtocolNumber, udpFwd.HandlePacket)
 

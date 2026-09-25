@@ -449,7 +449,14 @@ export default function App() {
     try {
       await SimpleConnect(on);
     } catch (e) {
-      showToast(String(e?.message || e).replace(/^.*?: /, ''), 'error');
+      const msg = String(e?.message || e).replace(/^.*?: /, '');
+      // UAC 同意后后端正在提权重启本应用（errRelaunchRequested）：
+      // 这是流程提示而非失败，按 info 展示；UAC 被拒等其他错误仍走 error
+      if (msg.includes('已请求以管理员身份重启')) {
+        showToast('正在以管理员身份重启应用，重启后将自动开启 TUN 模式…', 'info');
+      } else {
+        showToast(msg, 'error');
+      }
     } finally {
       try {
         const s = await GetCoreStatus();

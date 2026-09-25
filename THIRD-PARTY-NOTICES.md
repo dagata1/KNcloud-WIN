@@ -7,7 +7,7 @@
 
 | 组件 | 来源 | 许可 | 仓库内位置 |
 | --- | --- | --- | --- |
-| Xray-core | https://github.com/XTLS/Xray-core (v1.8.24) | MPL-2.0 | 以 Go 库链接进主程序 |
+| Xray-core | https://github.com/XTLS/Xray-core (v26.3.27) | MPL-2.0 | 以 Go 库链接进主程序 |
 | wintun.dll | https://www.wintun.net/ (0.14.1) | 允许随「仅通过其 API 使用」的软件分发 | `cores/wintun.dll`、`cores/wintun-LICENSE.txt` |
 | badvpn-tun2socks | https://github.com/ambrop72/badvpn | BSD-2-Clause | `cores/native/bin/badvpn-tun2socks.exe`（可选组件） |
 | geoip.dat / geosite.dat | https://github.com/v2fly/geoip 、https://github.com/v2fly/domain-list-community | CC-BY-SA-4.0 / MIT（详见上游） | `geo/`、以 embed 内置 |
