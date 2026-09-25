@@ -1,14 +1,35 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"net/http"
-	"regexp"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 )
+
+// callbackURLFrom 从 StartWebLogin 返回的授权 URL 中取出本地回调地址。
+// 回调路径带一段随机秘密（见 newWebLoginHandler），测试不能再自行拼固定路径。
+func callbackURLFrom(t *testing.T, loginURL string) string {
+	t.Helper()
+	u, err := url.Parse(loginURL)
+	if err != nil {
+		t.Fatalf("授权 URL 无法解析: %v", err)
+	}
+	// 站点地址形如 https://host/#/login?from=win_auth&callback=...
+	q := u.Query()
+	cb := q.Get("callback")
+	if cb == "" {
+		if i := strings.Index(loginURL, "callback="); i >= 0 {
+			cb, _ = url.QueryUnescape(loginURL[i+len("callback="):])
+		}
+	}
+	if cb == "" {
+		t.Fatalf("授权 URL 中找不到 callback 参数: %s", loginURL)
+	}
+	return cb
+}
 
 // TestWebLoginCallback 验证网页授权回传链路：StartWebLogin 起本地回调服务 →
 // 模拟网页授权后重定向（GET /auth/callback?token=..&email=..）→
@@ -21,28 +42,15 @@ func TestWebLoginCallback(t *testing.T) {
 	}
 	app := NewApp()
 
-	if _, err := app.StartWebLogin(); err != nil {
+	loginURL, err := app.StartWebLogin()
+	if err != nil {
 		t.Fatalf("StartWebLogin failed: %v", err)
 	}
 	defer app.stopWebLogin()
-
-	// 从日志里取本地回调端口
-	var port string
-	for i := 0; i < 20 && port == ""; i++ {
-		time.Sleep(100 * time.Millisecond)
-		for _, l := range app.GetLogs() {
-			if m := regexp.MustCompile(`127\.0\.0\.1:(\d+)`).FindStringSubmatch(l.Message); m != nil {
-				port = m[1]
-				break
-			}
-		}
-	}
-	if port == "" {
-		t.Fatal("callback server did not start (no port in logs)")
-	}
+	cb := callbackURLFrom(t, loginURL)
 
 	// 模拟网页授权后的重定向
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%s/auth/callback?token=fake-token&email=test@example.com", port))
+	resp, err := http.Get(cb + "?token=fake-token&email=test@example.com")
 	if err != nil {
 		t.Fatalf("callback request failed: %v", err)
 	}
@@ -75,26 +83,14 @@ func TestWebLoginMissingToken(t *testing.T) {
 		t.Skip("skipping in -short mode: opens the system default browser")
 	}
 	app := NewApp()
-	if _, err := app.StartWebLogin(); err != nil {
+	loginURL, err := app.StartWebLogin()
+	if err != nil {
 		t.Fatalf("StartWebLogin failed: %v", err)
 	}
 	defer app.stopWebLogin()
+	cb := callbackURLFrom(t, loginURL)
 
-	var port string
-	for i := 0; i < 20 && port == ""; i++ {
-		time.Sleep(100 * time.Millisecond)
-		for _, l := range app.GetLogs() {
-			if m := regexp.MustCompile(`127\.0\.0\.1:(\d+)`).FindStringSubmatch(l.Message); m != nil {
-				port = m[1]
-				break
-			}
-		}
-	}
-	if port == "" {
-		t.Fatal("callback server did not start")
-	}
-
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%s/auth/callback?email=test@example.com", port))
+	resp, err := http.Get(cb + "?email=test@example.com")
 	if err != nil {
 		t.Fatalf("callback request failed: %v", err)
 	}

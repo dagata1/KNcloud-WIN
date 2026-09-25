@@ -1,7 +1,11 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"fmt"
+	"html"
 	"net"
 	"net/http"
 	"net/url"
@@ -50,6 +54,67 @@ func (m *webLoginManager) stopLocked() {
 	m.done = nil
 }
 
+// webLoginCallbackBase 是回调路径的固定前缀，其后还要拼一段随机秘密。
+const webLoginCallbackBase = "/auth/callback/"
+
+// newWebLoginSecret 生成回调路径中的随机秘密（128 bit）。
+func newWebLoginSecret() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// newWebLoginHandler 构造一次性回调处理器。
+//
+// 这里的安全模型值得说清楚：回调服务监听在 127.0.0.1 的随机端口上，
+// 而浏览器里**任何**网页都能向 127.0.0.1 发起跨源请求（img/script 这类
+// 子资源请求不受同源策略阻拦，只是读不到响应 —— 但本接口的副作用是登录，
+// 不需要读响应）。端口只有约 16 bit 熵，恶意页面几千个 <img> 就能喷完，
+// 一旦命中就能把客户端登入攻击者的账户，进而让用户使用攻击者下发的
+// 代理节点 —— 全部流量都会经过攻击者。
+//
+// 因此回调路径里带一段 128 bit 随机秘密，只有拿到授权 URL 的官网知道。
+// 另外拒绝明显属于子资源的请求（Sec-Fetch-Dest: image/script/...），
+// 真正的回调是一次顶层导航，永远不会是这些值。
+func newWebLoginHandler(secret string, resCh chan<- *webLoginResult) http.Handler {
+	want := []byte(secret)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		// 子资源请求不可能是授权回调（真实回调是顶层导航 document）
+		switch r.Header.Get("Sec-Fetch-Dest") {
+		case "image", "script", "style", "font", "audio", "video", "object", "embed":
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		got := []byte(strings.TrimPrefix(r.URL.Path, webLoginCallbackBase))
+		if len(got) != len(want) || subtle.ConstantTimeCompare(got, want) != 1 {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		q := r.URL.Query()
+		token := q.Get("token")
+		if token == "" {
+			token = q.Get("auth_data")
+		}
+		if token == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(webLoginHTML("授权失败：回调中缺少 token 参数，请重试")))
+			return
+		}
+		select {
+		case resCh <- &webLoginResult{token: token, email: q.Get("email")}:
+		default: // 已经收到过一次，忽略重复回调
+		}
+		_, _ = w.Write([]byte(webLoginHTML("登录成功！请回到 KNcloud-WIN 客户端继续使用，本页面可以关闭。")))
+	})
+}
+
 // StartWebLogin 打开浏览器进行网页登录授权，返回本次打开的授权 URL。
 // 结果通过事件 kncloud:web-login / kncloud:web-login-error 异步通知前端。
 func (a *App) StartWebLogin() (string, error) {
@@ -75,28 +140,21 @@ func (a *App) StartWebLogin() (string, error) {
 		m.mu.Unlock()
 		return "", fmt.Errorf("failed to start local callback server: %v", err)
 	}
+	secret, err := newWebLoginSecret()
+	if err != nil {
+		_ = ln.Close()
+		m.mu.Unlock()
+		return "", fmt.Errorf("failed to generate callback secret: %v", err)
+	}
 	resCh := make(chan *webLoginResult, 1)
 	port := ln.Addr().(*net.TCPAddr).Port
 	mux := http.NewServeMux()
-	mux.HandleFunc("/auth/callback", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		token := q.Get("token")
-		if token == "" {
-			token = q.Get("auth_data")
-		}
-		email := q.Get("email")
-		if token == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(webLoginHTML("授权失败：回调中缺少 token 参数，请重试")))
-			return
-		}
-		select {
-		case resCh <- &webLoginResult{token: token, email: email}:
-		default:
-		}
-		_, _ = w.Write([]byte(webLoginHTML("登录成功！请回到 KNcloud-WIN 客户端继续使用，本页面可以关闭。")))
-	})
-	srv := &http.Server{Handler: mux}
+	mux.Handle(webLoginCallbackBase, newWebLoginHandler(secret, resCh))
+	srv := &http.Server{
+		Handler: mux,
+		// 本地进程也可能挂着连接不发数据，给个读头超时避免占住服务
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 	m.ln = ln
 	m.srv = srv
 	m.done = resCh
@@ -104,7 +162,7 @@ func (a *App) StartWebLogin() (string, error) {
 
 	go func() { _ = srv.Serve(ln) }()
 
-	callbackURL := fmt.Sprintf("http://127.0.0.1:%d/auth/callback", port)
+	callbackURL := fmt.Sprintf("http://127.0.0.1:%d%s%s", port, webLoginCallbackBase, secret)
 	loginURL := strings.TrimRight(domain, "/") + "/#/login?from=win_auth&callback=" + url.QueryEscape(callbackURL)
 
 	if err := openInDefaultBrowser(loginURL); err != nil {
@@ -183,6 +241,15 @@ func stopWebLoginManager(m *webLoginManager) {
 }
 
 func openInDefaultBrowser(rawURL string) error {
+	// domain 来自配置文件，可能被改成 file:// 之类的协议；FileProtocolHandler
+	// 会照单全收地交给系统处理器执行。这里限定只放行 http/https。
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %v", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("refusing to open non-http(s) URL: %s", u.Scheme)
+	}
 	return exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL).Start()
 }
 
@@ -194,5 +261,5 @@ func webLoginHTML(msg string) string {
 		`<body style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0;` +
 		`font-family:system-ui,-apple-system,'Segoe UI','Microsoft YaHei',sans-serif;background:#181818;color:#fff;">` +
 		`<div style="text-align:center;"><div style="font-size:20px;font-weight:600;margin-bottom:12px;">KNcloud-WIN</div>` +
-		`<div style="font-size:14px;opacity:.8;">` + msg + `</div></div></body></html>`
+		`<div style="font-size:14px;opacity:.8;">` + html.EscapeString(msg) + `</div></div></body></html>`
 }
