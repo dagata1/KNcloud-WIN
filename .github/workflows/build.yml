@@ -49,6 +49,22 @@ jobs:
           cd frontend
           npm run build
 
+      - name: Format check
+        shell: bash
+        # gofmt 不合规直接失败（防止格式回退进入主干）
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt 需要格式化: $unformatted"
+            exit 1
+          fi
+
+      - name: Tidy check
+        shell: bash
+        # go.mod/go.sum 与代码必须同步（防止手工改依赖后 drift）
+        run: |
+          go mod tidy -diff
+
       - name: Vet
         shell: bash
         # unsafeptr 关闭：代码里的 Win32 syscall 惯用法（uintptr↔unsafe.Pointer）会触发误报

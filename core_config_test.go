@@ -222,3 +222,118 @@ func TestConfigJSONEncodable(t *testing.T) {
 		t.Fatal("trojan outbound missing")
 	}
 }
+
+// TestBuildProxyOutboundProtocolShapes 各协议 outbound 形状回归：
+// VLESS/VMess/Trojan/Shadowsocks × tls/reality/none × ws/grpc/httpupgrade，
+// 以及 allowInsecure 透传、SNI 回退、SS 旧字段拆分、不支持协议报错。
+func TestBuildProxyOutboundProtocolShapes(t *testing.T) {
+	settings := func(out map[string]interface{}) map[string]interface{} {
+		t.Helper()
+		return out["settings"].(map[string]interface{})
+	}
+	stream := func(out map[string]interface{}) map[string]interface{} {
+		t.Helper()
+		return out["streamSettings"].(map[string]interface{})
+	}
+
+	// --- VLESS + tls + ws：SNI 缺省回退 Address，allowInsecure/FP 透传，Host 头 ---
+	out, err := buildProxyOutbound(NodeItem{
+		Protocol: "VLESS", Name: "v", Address: "a.example", Port: 443,
+		UUID: "uid", Security: "tls", Network: "ws", AllowInsecure: true, FP: "safari",
+	}, false)
+	if err != nil {
+		t.Fatalf("VLESS: %v", err)
+	}
+	if out["protocol"] != "vless" || out["tag"] != "proxy" {
+		t.Fatalf("VLESS protocol/tag: %v", out)
+	}
+	tlsS := stream(out)["tlsSettings"].(map[string]interface{})
+	if tlsS["serverName"] != "a.example" {
+		t.Fatalf("serverName should fall back to Address: %v", tlsS)
+	}
+	if tlsS["allowInsecure"] != true || tlsS["fingerprint"] != "safari" {
+		t.Fatalf("allowInsecure/fingerprint not passed: %v", tlsS)
+	}
+	ws := stream(out)["wsSettings"].(map[string]interface{})
+	if ws["path"] != "/" {
+		t.Fatalf("ws path default: %v", ws)
+	}
+
+	// --- VLESS + reality：默认指纹 chrome ---
+	out, _ = buildProxyOutbound(NodeItem{
+		Protocol: "VLESS", Address: "r.example", Port: 443, UUID: "u2",
+		Security: "reality", Network: "tcp", SNI: "s.example", PBK: "pk", SID: "si",
+	}, false)
+	reality := stream(out)["realitySettings"].(map[string]interface{})
+	if reality["fingerprint"] != "chrome" || reality["publicKey"] != "pk" || reality["shortId"] != "si" || reality["serverName"] != "s.example" {
+		t.Fatalf("reality settings: %v", reality)
+	}
+	if stream(out)["security"] != "reality" {
+		t.Fatalf("reality security: %v", stream(out))
+	}
+
+	// --- VMess：alterId/security ---
+	out, _ = buildProxyOutbound(NodeItem{
+		Protocol: "VMess", Address: "m.example", Port: 1, UUID: "u3", AlterID: 8, Security: "none", Network: "tcp",
+	}, true)
+	users := settings(out)["vnext"].([]map[string]interface{})[0]["users"].([]map[string]interface{})
+	if users[0]["alterId"] != 8 || users[0]["security"] != "auto" {
+		t.Fatalf("vmess user: %v", users[0])
+	}
+	if _, has := out["mux"]; !has {
+		t.Fatalf("vmess mux expected when enabled")
+	}
+
+	// --- Trojan：servers/password，无 flow 时 mux ---
+	out, _ = buildProxyOutbound(NodeItem{
+		Protocol: "Trojan", Address: "t.example", Port: 443, UUID: "pass", Security: "tls", Network: "grpc", ServiceName: "svc",
+	}, true)
+	servers := settings(out)["servers"].([]map[string]interface{})
+	if servers[0]["password"] != "pass" {
+		t.Fatalf("trojan password: %v", servers[0])
+	}
+	if stream(out)["grpcSettings"].(map[string]interface{})["serviceName"] != "svc" {
+		t.Fatalf("grpc serviceName: %v", stream(out))
+	}
+
+	// --- Shadowsocks：method 字段优先；旧格式 "method:password" 拆分 ---
+	out, _ = buildProxyOutbound(NodeItem{
+		Protocol: "Shadowsocks", Address: "s.example", Port: 8388, Method: "aes-256-gcm", UUID: "pw",
+	}, false)
+	ss := settings(out)["servers"].([]map[string]interface{})[0]
+	if ss["method"] != "aes-256-gcm" || ss["password"] != "pw" {
+		t.Fatalf("shadowsocks server: %v", ss)
+	}
+	out, _ = buildProxyOutbound(NodeItem{
+		Protocol: "Shadowsocks", Address: "s.example", Port: 8388, UUID: "chacha20-ietf-poly1305:secret",
+	}, false)
+	ss = settings(out)["servers"].([]map[string]interface{})[0]
+	if ss["method"] != "chacha20-ietf-poly1305" || ss["password"] != "secret" {
+		t.Fatalf("shadowsocks legacy split: %v", ss)
+	}
+	if _, err := buildProxyOutbound(NodeItem{Protocol: "Shadowsocks", Address: "x", Port: 1, UUID: "no-colon"}, false); err == nil {
+		t.Fatalf("shadowsocks without method should error")
+	}
+
+	// --- httpupgrade ---
+	out, _ = buildProxyOutbound(NodeItem{
+		Protocol: "VLESS", Address: "h.example", Port: 443, UUID: "u", Security: "tls",
+		Network: "httpupgrade", Path: "/path", HostName: "cdn.example",
+	}, false)
+	hu := stream(out)["httpupgradeSettings"].(map[string]interface{})
+	if hu["path"] != "/path" || hu["host"] != "cdn.example" {
+		t.Fatalf("httpupgrade settings: %v", hu)
+	}
+
+	// --- 不支持的协议 ---
+	if _, err := buildProxyOutbound(NodeItem{Protocol: "Hysteria2", Address: "x", Port: 1}, false); err == nil {
+		t.Fatalf("Hysteria2 should be rejected")
+	}
+
+	// --- 无 flow 的 VLESS 开 mux：concurrency 固定 8 ---
+	out, _ = buildProxyOutbound(NodeItem{Protocol: "VLESS", Address: "a", Port: 1, UUID: "u", Security: "tls", Network: "tcp"}, true)
+	mux := out["mux"].(map[string]interface{})
+	if mux["enabled"] != true || mux["concurrency"] != 8 {
+		t.Fatalf("mux shape: %v", mux)
+	}
+}

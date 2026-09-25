@@ -18,6 +18,13 @@
 
 ## 构建
 
+环境要求：
+
+- **Go ≥ 1.26**（Xray-core v26.3.27 硬性要求，低版本编译会提示 toolchain 升级）
+- **Node.js ≥ 24**（前端构建）
+- **Wails CLI v2.15.0**：`go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0`
+- Windows 10/11（WebView2 运行时随系统分发；TUN 模式需管理员权限）
+
 ```bash
 wails build        # 产物位于 build/bin/KNcloud-WIN.exe
 ```
