@@ -167,10 +167,10 @@ func TestPersistedSaveLoadRoundTrip(t *testing.T) {
 			SocksPort: 10808, HttpPort: 10809, MuxEnabled: true, CoreType: "Xray-core",
 			DnsServers: "8.8.8.8", MinimizeToTray: true,
 		},
-		routingMode:     "bypass-cn",
-		activeNodeID:    "x1",
-		totalUpBytes:    9,
-		totalDownBytes:  99,
+		routingMode:    "bypass-cn",
+		activeNodeID:   "x1",
+		totalUpBytes:   9,
+		totalDownBytes: 99,
 		// 注意耦合：savePersisted 落盘的是 systemProxy（退出时的实际状态），
 		// 加载后读进 lastSystemProxy（用于崩溃残留识别）——两者在真实使用中同步变化
 		systemProxy: true,
