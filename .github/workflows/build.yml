@@ -63,7 +63,16 @@ jobs:
         shell: bash
         # go.mod/go.sum 与代码必须同步（防止手工改依赖后 drift）
         run: |
-          go mod tidy -diff
+          go mod tidy -diff 2>&1 | tee tidy-output.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Tidy diagnostics
+        if: failure()
+        shell: bash
+        # 失败时把 tidy 输出浓缩成单条 ::error:: 注解（日志 zip 下载不了时靠这条读错误）
+        run: |
+          { echo "=== tidy tail ==="; grep -v "^go: downloading" tidy-output.log | tail -40; } > diag.txt
+          echo "::error::$(sed ':a;N;$!ba;s/\n/%0A/g' diag.txt)"
 
       - name: Vet
         shell: bash
