@@ -114,7 +114,13 @@ jobs:
         run: |
           mkdir -p dist
           cp build/bin/KNcloud-WIN.exe dist/ || cp build/bin/*.exe dist/
-          cp build/bin/*-installer.exe dist/ 2>/dev/null && echo "NSIS installer staged" || echo "WARN: no installer produced"
+          if compgen -G "build/bin/*installer*.exe" > /dev/null; then
+            cp build/bin/*installer*.exe dist/
+            echo "NSIS installer staged"
+          else
+            echo "::error::no installer produced in build/bin: $(ls build/bin/)"
+            exit 1
+          fi
           ls -la dist/
 
       - name: Upload Build Artifact
