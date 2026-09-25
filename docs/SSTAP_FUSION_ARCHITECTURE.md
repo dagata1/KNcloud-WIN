@@ -187,6 +187,32 @@ TUN 生效后若不加处理，Xray 自己发往节点服务器的加密流量�
 
 ---
 
+### 3.9 凭证加密存储
+
+登录凭证以 Windows DPAPI 加密后写入 `config.json`（`credstore.go` 负责编码与
+迁移，`dpapi_windows.go` 负责系统调用）。
+
+选 DPAPI 而非自带密钥的对称加密：本地软件无处安放密钥，密钥与密文一起躺在
+磁盘上，加密就退化成编码。DPAPI 的密钥由 Windows 按当前用户账户派生并保管。
+另附应用固有熵值，使同一用户下的其它程序也解不开。
+
+| 场景 | 行为 |
+|---|---|
+| 旧版明文凭证 | 照常读出，下次保存自动迁移为密文，老用户不会被登出 |
+| 配置来自其它机器/账户 | 解密失败 → 清空凭证并告警，要求重新登录 |
+| 加密失败 | 不写入凭证（fail-closed），退回明文等于防护从未存在 |
+
+代价是密文绑定「这台机器上的这个 Windows 用户」，配置文件无法跨机迁移 ——
+对登录凭证而言这正是期望行为。
+
+### 3.10 前端结构
+
+`frontend/src/App.jsx` 保留状态管理与副作用，视图拆分为 7 个纯展示组件
+（`components/LoginView`、`components/SimpleView`、`components/tabs/*`），
+依赖全部经 props 传入。
+
+---
+
 ## 4. 尚未实现
 
 以下内容**当前代码中不存在**，列出以免与已实现部分混淆。
@@ -231,6 +257,8 @@ UI 与拦截逻辑无需改动（`Unsupported` 是实时计算的，老配置文
 
 - **流式延迟推送**：`PingNodes` 目前是批量并发测速后统一返回，非逐节点流式推送
 - **TCP 快速回收 / 连接级统计**：当前统计基于内核 stats 计数器，无单连接粒度
+- **订阅链接同样是凭证**：`AccountInfo.SubURL` 内含 token，目前仍明文持久化。
+  其敏感度与登录凭证相当（拿到即可取回全部节点），尚未纳入 3.9 的加密范围
 
 ---
 
@@ -273,10 +301,13 @@ UI 与拦截逻辑无需改动（`Unsupported` 是实时计算的，老配置文
 | 文件 | 行数 | 职责 |
 |---|---|---|
 | `tapstack.go` | 1061 | wintun 适配器 + gVisor 栈 + TCP/UDP/DNS 转发（TUN 唯一实现） |
-| `app.go` | 1124 | `App` 结构体、Wails 绑定方法、节点/订阅/设置/生命周期 |
-| `tun.go` | 541 | Windows 路由表操作、`applySstapRouting`、IPv6 路由 |
-| `core.go` | 495 | Xray-core 嵌入、配置生成、geo 资源、真连接测速 |
+| `app.go` | 1200 | `App` 结构体、Wails 绑定方法、节点/订阅/设置/生命周期 |
+| `tun.go` | 544 | Windows 路由表操作、`applySstapRouting`、IPv6 路由 |
+| `core.go` | 611 | Xray-core 嵌入、配置生成、geo 资源、真连接测速、出站热切换 |
 | `sstap.go` | 162 | 分流策略引擎、SSTap `.rules` 解析（纯函数） |
+| `credstore.go` | 62 | 凭证加解密的编码与迁移（跨平台） |
+| `dpapi_windows.go` | 132 | DPAPI 系统调用封装 |
+| `frontend/src/App.jsx` | 1017 | 前端状态管理与副作用（视图已拆分至 components/） |
 
 > `tun.go` 中的 sing-box 子进程链路（启停、Job 对象、pnputil 设备清理、
 > 配置生成，共 715 行）已整体删除，其职责由 `tapstack.go` 承担。
