@@ -92,13 +92,17 @@ export default function SettingsTab({ handleSaveSettings, setLocalSettings, sett
       <div className="win11-card" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
         <h3 style={{ fontSize: '14px', fontWeight: 600 }}>DNS 服务器设置</h3>
         <div className="form-group">
-          <label className="form-label">远程与直连 DNS 服务器地址 (英文逗号分隔)</label>
+          <label className="form-label">DNS 服务器地址 (英文逗号分隔)</label>
           <input
             type="text"
             className="win11-input"
             value={settings.dnsServers}
             onChange={e => setLocalSettings({ ...settings, dnsServers: e.target.value })}
           />
+          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '6px', lineHeight: '1.6' }}>
+            TUN 模式下的 DNS 查询会直连列表中<strong>第一个纯 IPv4 地址</strong>（防污染、防回环）。
+            DoH / DoT 地址、域名与 IPv6 在这条通道上用不了，会被跳过；全部不可用时回退 223.5.5.5。
+          </div>
         </div>
       </div>
 

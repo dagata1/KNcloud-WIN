@@ -14,7 +14,7 @@ package main
 //  2. 用户态 TCP/IP 协议栈：gvisor netstack 直接消费网卡收发包
 //     （对应 SSTap 的 ss-tap/tun2socks）；
 //  3. 转发出口：TCP 走 SOCKS5 CONNECT、UDP 走 SOCKS5 UDP ASSOCIATE，
-//     DNS（UDP:53）经物理网卡直连公共 DNS（223.5.5.5）防污染防回环。
+//     DNS（UDP:53）经物理网卡直连上游 DNS（用户可配）防污染防回环。
 //
 // 出口指向本机 Xray 内核的 SOCKS 入站（v2rayN 方案），两套方案就此合并：
 // Xray 常驻做代理大脑，TUN 只负责「抓流量」，开关全部是秒级路由操作。
@@ -658,9 +658,18 @@ func (a *App) startTapForwarding() error {
 		stack:     s,
 		linkEP:    link,
 		socksAddr: fmt.Sprintf("127.0.0.1:%d", a.settings.SocksPort),
-		dnsAddr:   "223.5.5.5:53",
+		dnsAddr:   tunDNSUpstream(a.settings.DnsServers),
 		physIdx:   physIdx,
 		stopCh:    stopCh,
+	}
+	if f.dnsAddr == defaultTunDNS && strings.TrimSpace(a.settings.DnsServers) != "" {
+		// 用户配了 DNS 却一个都用不上（例如全填了 DoH 地址），说明设置未生效，
+		// 必须说清楚，否则用户会以为自己的 DNS 正在被使用。
+		a.addLogInternal("warn", fmt.Sprintf(
+			"None of the configured DNS servers (%s) can be used for TUN queries (plain IPv4 only); falling back to %s",
+			a.settings.DnsServers, defaultTunDNS))
+	} else {
+		a.addLogInternal("info", fmt.Sprintf("TUN DNS upstream: %s", f.dnsAddr))
 	}
 
 	// TCP：每条连接 SOCKS5 CONNECT 到原始目标
@@ -806,7 +815,8 @@ func (a *App) tunSoftStopLocked() {
 }
 
 // relayDNS DNS 通道：把 TUN 内的 UDP:53 查询经绑定物理网卡的 socket 直连
-// 公共 DNS（223.5.5.5）。绑定物理网卡保证 global 模式下不回环。
+// 上游 DNS（f.dnsAddr，由用户设置决定，见 tunDNSUpstream）。
+// 绑定物理网卡保证 global 模式下不回环。
 func (f *tapForwarder) relayDNS(pc net.PacketConn, dst *net.UDPAddr) {
 	lc := net.ListenConfig{Control: bindToIfaceControl(f.physIdx)}
 	ctx, cancel := context.WithCancel(context.Background())

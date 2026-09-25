@@ -609,3 +609,38 @@ func (a *App) hotSwapProxyOutboundLocked(node NodeItem) error {
 	}
 	return nil
 }
+
+// ------------------------- TUN 直连 DNS 上游 -------------------------
+
+// defaultTunDNS 是用户未配置可用上游时的兜底 DNS。
+const defaultTunDNS = "223.5.5.5:53"
+
+// tunDNSUpstream 从用户配置的 DNS 列表里挑出 TUN 路径可用的上游。
+//
+// 这条路径与 Xray 内部的 DNS 配置不同：TUN 模式下 UDP:53 被 gVisor 截获后，
+// 由 relayDNS 以原始 UDP 经绑定物理网卡的 IPv4 socket 直接发出（防污染防回环），
+// 因此只能使用「纯 IPv4 地址」形式的条目：
+//   - DoH / DoT（https:// tls:// quic:// 等）在原始 UDP 通道上无法使用；
+//   - 域名形式需要先解析，而这里正是解析 DNS 的地方，会成环；
+//   - IPv6 上游无法从 IPv4 socket 发出。
+//
+// 以上条目会被跳过，取第一个可用的 IPv4 条目；都不可用时回退 defaultTunDNS，
+// 保证 DNS 通道始终有上游可用。
+func tunDNSUpstream(setting string) string {
+	for _, raw := range strings.Split(setting, ",") {
+		s := strings.TrimSpace(raw)
+		if s == "" {
+			continue
+		}
+		host, port := s, "53"
+		if h, p, err := net.SplitHostPort(s); err == nil {
+			host, port = h, p
+		}
+		ip := net.ParseIP(host)
+		if ip == nil || ip.To4() == nil {
+			continue
+		}
+		return net.JoinHostPort(host, port)
+	}
+	return defaultTunDNS
+}

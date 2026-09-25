@@ -117,6 +117,17 @@ TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewPro
 > 该处常量注释原写作「端口 53 被 sing-box 劫持」，属 sing-box 移除后的遗留描述，
 > 已随本文档一并修正（`tun.go:36`）。
 
+**上游 DNS 由用户设置决定。** `settings.dnsServers` 此前只作用于 Xray 内部的
+DNS 配置，TUN 这条路径写死 `223.5.5.5` —— 用户改了设置也不生效。现在由
+`tunDNSUpstream()`（`core.go`）从列表中挑选：
+
+- 只接受**纯 IPv4 地址**：`relayDNS` 以原始 UDP 经绑定物理网卡的 IPv4 socket 发出；
+- DoH / DoT（`https://` `tls://`）在原始 UDP 通道上无法使用，跳过；
+- 域名形式需要先解析，而这里正是解析 DNS 的地方，会成环，跳过；
+- IPv6 无法从 IPv4 socket 发出，跳过；
+- 取第一个可用项；全部不可用时回退 `223.5.5.5:53` 并记录 warn 日志，
+  避免用户误以为自己配置的 DNS 正在生效。
+
 ### 3.4 防回环：节点 IP 的 /32 直连路由
 
 TUN 生效后若不加处理，Xray 自己发往节点服务器的加密流量会被自己的虚拟网卡吸走，
