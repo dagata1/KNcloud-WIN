@@ -41,6 +41,36 @@ func decodeB64Flexible(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
 }
 
+// vmessFieldString 把 vmess JSON 里的任意标量字段统一成字符串。
+//
+// 该格式没有严格规范，同一个字段在不同生成器里可能是字符串、数字或布尔：
+// port 常见 "443" 与 443 两种，tls 常见 "tls" 与 true 两种。
+func vmessFieldString(v interface{}) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return x
+	case bool:
+		if x {
+			return "true"
+		}
+		return "false"
+	case float64:
+		// -1 精度：443 输出 "443" 而不是 "443.000000"
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	case json.Number:
+		return x.String()
+	default:
+		// 对象 / 数组这类非标量字段本就用不上，原样序列化即可，不丢信息
+		b, err := json.Marshal(x)
+		if err != nil {
+			return ""
+		}
+		return string(b)
+	}
+}
+
 func parseVMessLink(link string) (NodeItem, error) {
 	raw := strings.TrimPrefix(link, "vmess://")
 	raw = strings.TrimSpace(strings.SplitN(raw, "#", 2)[0])
@@ -48,9 +78,17 @@ func parseVMessLink(link string) (NodeItem, error) {
 	if err != nil {
 		return NodeItem{}, fmt.Errorf("vmess base64 decode failed: %w", err)
 	}
-	var j map[string]string
-	if err := json.Unmarshal(data, &j); err != nil {
+	// 不能直接反序列化成 map[string]string：vmess 分享链接的 JSON 里
+	// port / aid / v 既可能是字符串（v2rayN 风格），也可能是数字
+	// （Clash 转换器与不少面板的输出）。按字符串解会整条失败，
+	// 于是这类订阅里的节点会被静默丢弃。
+	var rawFields map[string]interface{}
+	if err := json.Unmarshal(data, &rawFields); err != nil {
 		return NodeItem{}, fmt.Errorf("vmess JSON parse failed: %w", err)
+	}
+	j := make(map[string]string, len(rawFields))
+	for k, v := range rawFields {
+		j[k] = vmessFieldString(v)
 	}
 	port, _ := strconv.Atoi(j["port"])
 	aid, _ := strconv.Atoi(j["aid"])
