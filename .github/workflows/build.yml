@@ -173,4 +173,9 @@ jobs:
                 gh api -X DELETE "repos/$REPO/actions/artifacts/$id" >/dev/null && echo "  deleted artifact $id" || echo "  skip $id"
               done
           echo "== clear build caches =="
-          gh cache delete --all 2>/dev/null && echo "  caches cleared" || echo "  no caches to clear"
+          # 不用 gh cache delete：job 无 checkout，gh 推断不出 repo；直接走 REST API
+          gh api "repos/$REPO/actions/caches?per_page=100" --paginate \
+            --jq '.actions_caches[] | .id' \
+            | while read -r id; do
+                gh api -X DELETE "repos/$REPO/actions/caches/$id" >/dev/null && echo "  deleted cache $id" || echo "  skip $id"
+              done
