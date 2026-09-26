@@ -25,7 +25,8 @@ jobs:
         with:
           # xray-core v26.3.27 要求 go >= 1.26
           go-version: '1.26'
-          cache: true
+          # 不用模块缓存：Windows go cache 约 500MB/个，私有仓库 Actions 存储配额（500MB）装不下
+          cache: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -138,6 +139,8 @@ jobs:
         with:
           name: KNcloud-WIN-windows-amd64
           path: dist/*.exe
+          # 私有仓库存储配额有限：短保留期，Release 走 tag 附件不受此限
+          retention-days: 7
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -147,3 +150,27 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 存储清洁工：私有仓库 Actions 存储（artifact+cache）配额仅 500MB，
+  # 每次构建后清掉历史 artifact（只留本次）与构建 cache，防止配额爆掉
+  cleanup:
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ always() }}
+    permissions:
+      actions: write
+    steps:
+      - name: Delete old artifacts & caches
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          REPO="${{ github.repository }}"
+          echo "== clean old artifacts (keep run ${GITHUB_RUN_ID}) =="
+          gh api "repos/$REPO/actions/artifacts?per_page=100" --paginate \
+            --jq '.artifacts[] | select(.workflow_run.id != '"${GITHUB_RUN_ID}"') | .id' \
+            | while read -r id; do
+                gh api -X DELETE "repos/$REPO/actions/artifacts/$id" >/dev/null && echo "  deleted artifact $id" || echo "  skip $id"
+              done
+          echo "== clear build caches =="
+          gh cache delete --all 2>/dev/null && echo "  caches cleared" || echo "  no caches to clear"
