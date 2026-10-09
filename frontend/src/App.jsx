@@ -1779,17 +1779,20 @@ export default function App() {
                         justifyContent: 'space-between',
                         padding: '12px 18px',
                         cursor: 'pointer',
-                        border: (isActive || isSelected)
+                        // 蓝色描边只表示「选中」；当前启用的节点用绿色左边条 + 「活动」标签区分，
+                        // 免得点别的节点后，活动节点看着像还停留着焦点
+                        border: isSelected
                           ? '1px solid var(--accent)'
                           : '1px solid var(--border-subtle)',
-                        boxShadow: (isActive || isSelected)
+                        borderLeft: isActive
+                          ? '3px solid #22c55e'
+                          : isSelected ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
+                        boxShadow: isSelected
                           ? '0 0 0 1px var(--accent)'
                           : 'var(--shadow-card)',
-                        background: isActive
+                        background: isSelected
                           ? 'var(--accent-subtle)'
-                          : isSelected
-                            ? 'rgba(0, 120, 212, 0.08)'
-                            : 'var(--bg-card)',
+                          : 'var(--bg-card)',
                         transition: 'all 0.15s ease'
                       }}
                     >
@@ -1798,10 +1801,10 @@ export default function App() {
                           width: '18px',
                           height: '18px',
                           borderRadius: '50%',
-                          border: isActive
+                          border: isSelected
                             ? '5px solid var(--accent)'
-                            : isSelected
-                              ? '4px solid var(--accent)'
+                            : isActive
+                              ? '5px solid #22c55e'
                               : '2px solid var(--border-default)',
                           backgroundColor: 'transparent',
                           transition: 'border 0.15s ease'
@@ -1814,9 +1817,9 @@ export default function App() {
                               <span style={{
                                 fontSize: '10px',
                                 fontWeight: 600,
-                                color: 'var(--accent)',
-                                background: 'var(--accent-subtle)',
-                                border: '1px solid var(--accent-border)',
+                                color: '#22c55e',
+                                background: 'rgba(34, 197, 94, 0.12)',
+                                border: '1px solid rgba(34, 197, 94, 0.4)',
                                 padding: '1px 6px',
                                 borderRadius: '3px',
                                 display: 'inline-flex',
