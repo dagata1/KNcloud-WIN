@@ -1769,8 +1769,8 @@ export default function App() {
                             return;
                           }
                         }
-                        // 单击只选中；选中单个后按 Enter 才启用（主要切换入口在主页快速选择）
-                        setSelectedNodeIds([node.id]);
+                        // 单击只选中，再点一次取消；选中单个后按 Enter 才启用（主要切换入口在主页快速选择）
+                        setSelectedNodeIds(ids => (ids.length === 1 && ids[0] === node.id) ? [] : [node.id]);
                       }}
                       style={{
                         display: 'flex',
@@ -1793,9 +1793,22 @@ export default function App() {
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1 }}>
                         {/* 节点列表主要用来编辑 / 批量操作：用复选框表示选中，不用单选圆点（启用节点在主页快速选择） */}
-                        <div style={{
+                        <div
+                          role="checkbox"
+                          aria-checked={isSelected}
+                          title={isSelected ? '取消选择' : '加入选择'}
+                          onClick={(e) => {
+                            // 复选框：加选 / 减选（多选），不影响其它已选节点
+                            e.stopPropagation();
+                            if (suppressClickRef.current) return;
+                            setSelectedNodeIds(ids => ids.includes(node.id)
+                              ? ids.filter(x => x !== node.id)
+                              : [...ids, node.id]);
+                          }}
+                          style={{
                           width: '16px',
                           height: '16px',
+                          cursor: 'pointer',
                           flexShrink: 0,
                           borderRadius: '4px',
                           border: isSelected ? '1px solid var(--accent)' : '1.5px solid var(--border-default)',
