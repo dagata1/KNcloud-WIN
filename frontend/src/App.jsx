@@ -40,6 +40,7 @@ import {
   LoaderCircle,
   Gauge,
   LogOut,
+  CircleHelp,
 } from 'lucide-react';
 
 import {
@@ -1663,14 +1664,26 @@ export default function App() {
           {activeTab === 'servers' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div className="content-header" style={{ marginBottom: '4px', alignItems: 'center', gap: '16px' }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <h1 className="content-title">节点列表</h1>
-                  {/* 一行提示，放不下就省略；完整快捷键在按钮悬停提示里 */}
-                  <p className="content-subtitle" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {selectedNodeIds.length > 0
-                      ? `已选 ${selectedNodeIds.length} 个${selectedNodeIds.length === 1 ? ' · Enter 启用' : ''} · Ctrl+R 测速 · Delete 删除 · Esc 取消`
-                      : `共 ${filteredNodes.length} 个节点 · 单击选中，Enter 启用 · Ctrl+点击或拖动多选`}
-                  </p>
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <h1 className="content-title" style={{ margin: 0 }}>节点列表</h1>
+                  {/* 操作说明收进 ?：悬停（桌面）或点击显示 */}
+                  <span className="help-pop" tabIndex={0} aria-label="操作说明">
+                    <CircleHelp size={15} />
+                    <span className="help-pop-body" role="tooltip">
+                      <b>操作说明</b>
+                      <span>单击选中，再点一次取消</span>
+                      <span>点复选框、Ctrl+点击或拖动框选：多选</span>
+                      <span><kbd>Enter</kbd> 启用选中的节点（仅选中一个时）</span>
+                      <span><kbd>Ctrl+A</kbd> 全选 · <kbd>Esc</kbd> 取消选择</span>
+                      <span><kbd>Ctrl+R</kbd> 测速选中节点</span>
+                      <span><kbd>Delete</kbd> 删除选中节点</span>
+                      <span><kbd>Ctrl+C</kbd> 复制当前节点链接 · <kbd>Ctrl+V</kbd> 从剪贴板导入</span>
+                      <span className="help-pop-note">切换节点主要在仪表盘的快速选择里进行</span>
+                    </span>
+                  </span>
+                  {selectedNodeIds.length > 0 && (
+                    <span className="sel-count">已选 {selectedNodeIds.length}</span>
+                  )}
                 </div>
                 <div className="node-toolbar" style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
                   {selectedNodeIds.length > 0 ? (
