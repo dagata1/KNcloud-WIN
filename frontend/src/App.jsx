@@ -1675,7 +1675,7 @@ export default function App() {
                       <span>点复选框、Ctrl+点击或拖动框选：多选</span>
                       <span><kbd>Enter</kbd> 启用选中的节点（仅选中一个时）</span>
                       <span><kbd>Ctrl+A</kbd> 全选 · <kbd>Esc</kbd> 取消选择</span>
-                      <span><kbd>Ctrl+R</kbd> 测速选中节点</span>
+                      <span><kbd>Ctrl+R</kbd> 测速选中节点（<kbd>Ctrl+A</kbd> 后按即全部测速）</span>
                       <span><kbd>Delete</kbd> 删除选中节点</span>
                       <span><kbd>Ctrl+C</kbd> 复制当前节点链接 · <kbd>Ctrl+V</kbd> 从剪贴板导入</span>
                       <span className="help-pop-note">切换节点主要在仪表盘的快速选择里进行</span>
@@ -1685,63 +1685,14 @@ export default function App() {
                     <span className="sel-count">已选 {selectedNodeIds.length}</span>
                   )}
                 </div>
-                <div className="node-toolbar" style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
-                  {selectedNodeIds.length > 0 ? (
-                    <>
-                      <button
-                        className="win11-btn"
-                        onClick={handlePingSelected}
-                        disabled={isPingingAll}
-                        title="真连接测速所有选中的节点（快捷键 Ctrl+R）"
-                      >
-                        {isPingingAll ? <LoaderCircle size={13} className="spin" /> : <Gauge size={13} />}
-                        <span>{isPingingAll ? '测速中…' : `测速 (${selectedNodeIds.length})`}</span>
-                      </button>
-                      <button
-                        className="win11-btn danger"
-                        onClick={() => setDeleteConfirmIds([...selectedNodeIds])}
-                        title="删除所有选中的节点（快捷键 Delete）"
-                      >
-                        <Trash2 size={13} />
-                        <span>删除</span>
-                      </button>
-                      <button
-                        className="win11-btn"
-                        onClick={() => setSelectedNodeIds([])}
-                        title="取消选择（快捷键 Esc）"
-                      >
-                        <span>取消</span>
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        className="win11-btn"
-                        onClick={() => {
-                          const allIds = filteredNodes.map(n => n.id);
-                          setSelectedNodeIds(allIds);
-                          showToast(`已全选 ${allIds.length} 个节点（按 Ctrl+R 测速）`, 'info');
-                        }}
-                        title="全选当前列表节点（快捷键 Ctrl+A）"
-                      >
-                        <span>全选</span>
-                      </button>
-                      <button
-                        className="win11-btn"
-                        onClick={handlePingAll}
-                        disabled={isPingingAll}
-                        title="全部节点真连接测速"
-                      >
-                        {isPingingAll ? <LoaderCircle size={13} className="spin" /> : <Zap size={13} />}
-                        <span>{isPingingAll ? '测速中…' : '全部测速'}</span>
-                      </button>
-                    </>
-                  )}
-                  <button className="win11-btn primary" onClick={() => setShowAddNodeModal(true)} title="手动添加单个节点">
-                    <Plus size={13} />
-                    <span>添加节点</span>
-                  </button>
-                </div>
+                <button
+                  className="win11-btn primary icon-only"
+                  onClick={() => setShowAddNodeModal(true)}
+                  title="添加节点"
+                  aria-label="添加节点"
+                >
+                  <Plus size={16} />
+                </button>
               </div>
 
               {/* Nodes List */}

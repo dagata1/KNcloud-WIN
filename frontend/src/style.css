@@ -1729,8 +1729,8 @@ select.win11-input option {
 .update-progress-msg.error { color: #d13438; }
 .dark-theme .update-progress-msg.error { color: #ff99a4; }
 
-/* 节点列表工具栏：按钮文字不换行 */
-.node-toolbar .win11-btn { white-space: nowrap; flex-shrink: 0; }
+/* 节点列表标题栏只留一个 + 按钮 */
+.win11-btn.icon-only { width: 32px; height: 32px; padding: 0; justify-content: center; flex-shrink: 0; }
 
 /* 标题旁的 ? 说明弹层：桌面悬停，触屏点击（focus） */
 .help-pop { position: relative; display: inline-flex; align-items: center; color: var(--text-tertiary, #8a8a8a); cursor: help; outline: none; }
