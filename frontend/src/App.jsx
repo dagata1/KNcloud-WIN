@@ -1662,30 +1662,27 @@ export default function App() {
           {/* TAB 2: SERVERS (NODES) */}
           {activeTab === 'servers' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <div className="content-header" style={{ marginBottom: '4px' }}>
-                <div>
+              <div className="content-header" style={{ marginBottom: '4px', alignItems: 'center', gap: '16px' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <h1 className="content-title">节点列表</h1>
-                  {selectedNodeIds.length > 0 ? (
-                    <p className="content-subtitle">
-                      已选中 {selectedNodeIds.length} 个节点 · {selectedNodeIds.length === 1 && (<><kbd style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: '3px', border: '1px solid var(--border-subtle)' }}>Enter</kbd> 启用 · </>)}按 <kbd style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: '3px', border: '1px solid var(--border-subtle)' }}>Ctrl+R</kbd> 批量测速 · <kbd style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: '3px', border: '1px solid var(--border-subtle)' }}>Delete</kbd> 删除 · <kbd style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: '3px', border: '1px solid var(--border-subtle)' }}>Esc</kbd> 取消选择
-                    </p>
-                  ) : (
-                    <p className="content-subtitle">
-                      快捷键：单击选中 · <kbd style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: '3px', border: '1px solid var(--border-subtle)' }}>Enter</kbd> 启用 · <kbd style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: '3px', border: '1px solid var(--border-subtle)' }}>Ctrl+A</kbd> 全选 · <kbd style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: '3px', border: '1px solid var(--border-subtle)' }}>Ctrl+R</kbd> 测速 · <kbd style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: '3px', border: '1px solid var(--border-subtle)' }}>Ctrl+点击</kbd> 或拖动框选
-                    </p>
-                  )}
+                  {/* 一行提示，放不下就省略；完整快捷键在按钮悬停提示里 */}
+                  <p className="content-subtitle" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {selectedNodeIds.length > 0
+                      ? `已选 ${selectedNodeIds.length} 个${selectedNodeIds.length === 1 ? ' · Enter 启用' : ''} · Ctrl+R 测速 · Delete 删除 · Esc 取消`
+                      : `共 ${filteredNodes.length} 个节点 · 单击选中，Enter 启用 · Ctrl+点击或拖动多选`}
+                  </p>
                 </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
+                <div className="node-toolbar" style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
                   {selectedNodeIds.length > 0 ? (
                     <>
                       <button
-                        className="win11-btn primary"
+                        className="win11-btn"
                         onClick={handlePingSelected}
                         disabled={isPingingAll}
                         title="真连接测速所有选中的节点（快捷键 Ctrl+R）"
                       >
                         {isPingingAll ? <LoaderCircle size={13} className="spin" /> : <Gauge size={13} />}
-                        <span>{isPingingAll ? '测速中…' : `测速选中 (${selectedNodeIds.length})`}</span>
+                        <span>{isPingingAll ? '测速中…' : `测速 (${selectedNodeIds.length})`}</span>
                       </button>
                       <button
                         className="win11-btn danger"
@@ -1693,14 +1690,14 @@ export default function App() {
                         title="删除所有选中的节点（快捷键 Delete）"
                       >
                         <Trash2 size={13} />
-                        <span>删除选中</span>
+                        <span>删除</span>
                       </button>
                       <button
                         className="win11-btn"
                         onClick={() => setSelectedNodeIds([])}
-                        title="取消多选（快捷键 Esc）"
+                        title="取消选择（快捷键 Esc）"
                       >
-                        <span>取消选择</span>
+                        <span>取消</span>
                       </button>
                     </>
                   ) : (
@@ -1714,7 +1711,7 @@ export default function App() {
                         }}
                         title="全选当前列表节点（快捷键 Ctrl+A）"
                       >
-                        <span>全选节点</span>
+                        <span>全选</span>
                       </button>
                       <button
                         className="win11-btn"
@@ -2262,7 +2259,7 @@ export default function App() {
                   value={newNode.protocol}
                   onChange={e => setNewNode({ ...newNode, protocol: e.target.value })}
                 >
-                  <option value="VLESS">VLESS (推荐)</option>
+                  <option value="VLESS">VLESS</option>
                   <option value="VMess">VMess</option>
                   <option value="Trojan">Trojan</option>
                   <option value="Hysteria2">Hysteria2</option>
