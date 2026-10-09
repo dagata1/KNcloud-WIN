@@ -1743,7 +1743,6 @@ export default function App() {
                 {filteredNodes.map(node => {
                   const isSwitching = switchingNodeId === node.id;
                   const isSelected = selectedNodeIds.includes(node.id);
-                  const isActive = !!node.active;
                   return (
                     <div
                       key={node.id}
@@ -1779,14 +1778,10 @@ export default function App() {
                         justifyContent: 'space-between',
                         padding: '12px 18px',
                         cursor: 'pointer',
-                        // 蓝色描边只表示「选中」；当前启用的节点用绿色左边条 + 「活动」标签区分，
-                        // 免得点别的节点后，活动节点看着像还停留着焦点
+                        // 蓝色描边只表示「选中」（编辑 / 批量操作）；当前启用的节点只用「活动」标签标出
                         border: isSelected
                           ? '1px solid var(--accent)'
                           : '1px solid var(--border-subtle)',
-                        borderLeft: isActive
-                          ? '3px solid #22c55e'
-                          : isSelected ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
                         boxShadow: isSelected
                           ? '0 0 0 1px var(--accent)'
                           : 'var(--shadow-card)',
@@ -1797,18 +1792,23 @@ export default function App() {
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1 }}>
+                        {/* 节点列表主要用来编辑 / 批量操作：用复选框表示选中，不用单选圆点（启用节点在主页快速选择） */}
                         <div style={{
-                          width: '18px',
-                          height: '18px',
-                          borderRadius: '50%',
-                          border: isSelected
-                            ? '5px solid var(--accent)'
-                            : isActive
-                              ? '5px solid #22c55e'
-                              : '2px solid var(--border-default)',
-                          backgroundColor: 'transparent',
-                          transition: 'border 0.15s ease'
-                        }} />
+                          width: '16px',
+                          height: '16px',
+                          flexShrink: 0,
+                          borderRadius: '4px',
+                          border: isSelected ? '1px solid var(--accent)' : '1.5px solid var(--border-default)',
+                          backgroundColor: isSelected ? 'var(--accent)' : 'transparent',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          transition: 'all 0.15s ease'
+                        }}>
+                          {isSelected && (
+                            <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 6.5l2.5 2.5 4.5-5" /></svg>
+                          )}
+                        </div>
                         <div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <span className={`proto-badge proto-${node.protocol.toLowerCase()}`}>{protoLabel(node)}</span>
