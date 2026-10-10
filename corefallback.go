@@ -121,8 +121,9 @@ func (a *App) emitRefresh() {
 // coreRetryLoop 按退避节奏重试启动内核。gen 过期（被取消）或程序退出时立即结束。
 func (a *App) coreRetryLoop(gen uint64) {
 	canceled := func() bool { return a.coreRetryGen.Load() != gen || a.quitting.Load() }
-	for i, wait := range coreRetryBackoff {
-		a.addLogInternal("info", fmt.Sprintf("Core restart attempt %d/%d in %s", i+1, len(coreRetryBackoff), wait))
+	schedule := a.coreRetrySchedule()
+	for i, wait := range schedule {
+		a.addLogInternal("info", fmt.Sprintf("Core restart attempt %d/%d in %s", i+1, len(schedule), wait))
 		deadline := time.Now().Add(wait)
 		for time.Now().Before(deadline) {
 			if canceled() {

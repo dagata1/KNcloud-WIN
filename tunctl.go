@@ -175,6 +175,7 @@ func pickFreeLoopbackPort() int {
 func (a *App) SimpleConnect(start bool) (bool, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.tunWanted = false // 用户手动开关 TUN：取消开机 TUN 恢复
 	if start {
 		err := a.tunStartLocked()
 		a.savePersisted()

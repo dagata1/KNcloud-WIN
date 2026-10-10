@@ -38,6 +38,10 @@ export function GetAppVersion() {
   return window['go']['main']['App']['GetAppVersion']();
 }
 
+export function GetAutoStartError() {
+  return window['go']['main']['App']['GetAutoStartError']();
+}
+
 export function GetCoreStatus() {
   return window['go']['main']['App']['GetCoreStatus']();
 }

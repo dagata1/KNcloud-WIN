@@ -77,11 +77,12 @@ import {
   ClearLogs,
   GetSettings,
   SaveSettings,
+  GetAutoStartError,
   WindowMin,
   WindowMax,
   WindowClose
 } from '../wailsjs/go/main/App';
-import { EventsOn, WindowSetSize, WindowUnmaximise, BrowserOpenURL } from '../wailsjs/runtime';
+import { EventsOn, WindowSetSize, WindowUnmaximise, WindowIsMaximised, BrowserOpenURL } from '../wailsjs/runtime';
 
 const protoLabel = (n) => (n.protocol === 'HTTP' && n.security === 'tls') ? 'HTTPS' : n.protocol;
 
@@ -91,8 +92,10 @@ export default function App() {
   const WINDOW_SIZE = { simple: { w: 420, h: 640 }, classic: { w: 1120, h: 760 } };
   const applyWindowSize = async (mode) => {
     const s = WINDOW_SIZE[mode] || WINDOW_SIZE.classic;
-    // 窗口处于最大化时 SetSize 不生效，会一直停在大尺寸；先还原成普通窗口
-    try { await WindowUnmaximise(); } catch (e) { /* 未最大化时忽略 */ }
+    // 窗口处于最大化时 SetSize 不生效，会一直停在大尺寸；先还原成普通窗口。
+    // 只在确实最大化时还原：Wails 的 Unmaximise 会顺带 ShowWindow，开机自启隐藏在托盘时
+    // 无条件调用会把主窗口弹出来。
+    try { if (await WindowIsMaximised()) await WindowUnmaximise(); } catch (e) { /* 忽略 */ }
     WindowSetSize(s.w, s.h);
   };
 
@@ -1017,8 +1020,25 @@ export default function App() {
     }
   };
 
+  // 开机自启配置失败的原因（计划任务创建 / 删除失败），设置页开关下方提示
+  const [autoStartError, setAutoStartError] = useState('');
+  const refreshAutoStartError = async () => {
+    try { setAutoStartError((await GetAutoStartError()) || ''); } catch (e) { /* 旧后端无此接口时忽略 */ }
+  };
+  useEffect(() => { refreshAutoStartError(); }, []);
+
   const handleSaveSettings = async () => {
+    const wantAutoStart = !!settings.autoStart;
     await SaveSettings(settings);
+    const asErr = (await GetAutoStartError().catch(() => '')) || '';
+    setAutoStartError(asErr);
+    const saved = await GetSettings().catch(() => null);
+    if (saved) setLocalSettings(saved);
+    if (asErr && saved && !!saved.autoStart !== wantAutoStart) {
+      // 后端已把开机自启回滚到原状态，其余首选项照常保存
+      showToast((wantAutoStart ? '开启' : '关闭') + '开机自启失败：' + asErr, 'error');
+      return;
+    }
     showToast('首选项已成功保存！', 'success');
   };
 
@@ -2090,8 +2110,13 @@ export default function App() {
                   <div>
                     <div style={{ fontSize: '13px', fontWeight: 500 }}>开机自动启动</div>
                     <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                      登录 Windows 后自动启动 KNcloud-WIN，方便随时接管代理
+                      登录 Windows 后自动启动 KNcloud-WIN 并最小化到托盘（通过「任务计划程序」实现）
                     </div>
+                    {autoStartError && (
+                      <div style={{ fontSize: '11px', color: '#d13438', marginTop: '4px', wordBreak: 'break-all' }}>
+                        开机自启配置失败：{autoStartError}（详见日志）
+                      </div>
+                    )}
                   </div>
                   <label className="win11-toggle">
                     <input

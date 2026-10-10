@@ -20,6 +20,8 @@ export function GetAccount():Promise<main.AccountInfo>;
 
 export function GetAppVersion():Promise<string>;
 
+export function GetAutoStartError():Promise<string>;
+
 export function GetCoreStatus():Promise<main.CoreStatus>;
 
 export function GetLogs():Promise<Array<main.LogItem>>;
