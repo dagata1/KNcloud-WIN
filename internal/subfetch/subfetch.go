@@ -1,6 +1,6 @@
-// Package subfetch 通过本程序的本地 HTTP 代理拉取订阅内容。
+// Package subfetch 通过本程序的本地 HTTP 代理拉取订阅内容（应用内更新也复用 NewClient）。
 //
-// 订阅一律走本地 HTTP 入站（内核常开，分流 / 直连由内核按当前模式决定），不再直连兜底。
+// 订阅 / 更新一律走本地 HTTP 入站（内核常开，分流 / 直连由内核按当前模式决定），不再直连兜底。
 // 内核正在重启 / 重试时本地端口可能短暂不通：先等它起来（轮询端口，最多 Wait），再发请求。
 // 纯标准库，可在 Linux 上跑单测；调用方在主包 app.go。
 package subfetch
@@ -65,14 +65,28 @@ func WaitPort(opt Options) (int, error) {
 	}
 }
 
+// NewClient 等本地代理可用（最多 opt.Wait，期间跟随端口变化），返回一个只经该代理出站的
+// HTTP 客户端（Transport 显式指定代理，不读环境变量 / 系统代理，也没有直连兜底）。
+// 每次请求前调用一次，内核重启换了端口时下一次请求就会用新端口。
+func NewClient(opt Options) (*http.Client, error) {
+	port, err := WaitPort(opt)
+	if err != nil {
+		return nil, err
+	}
+	pu, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
+	return &http.Client{Timeout: opt.Timeout, Transport: &http.Transport{
+		Proxy:                 http.ProxyURL(pu),
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+	}}, nil
+}
+
 // Fetch 经本地 HTTP 代理拉取 rawURL。
 func Fetch(rawURL string, opt Options) (string, error) {
-	port, err := WaitPort(opt)
+	client, err := NewClient(opt)
 	if err != nil {
 		return "", err
 	}
-	pu, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
-	client := &http.Client{Timeout: opt.Timeout, Transport: &http.Transport{Proxy: http.ProxyURL(pu)}}
 	return get(client, rawURL)
 }
 

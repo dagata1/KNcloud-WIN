@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -44,5 +45,62 @@ func TestSubscriptionFetchAlwaysViaLocalProxy(t *testing.T) {
 	got, err := a.fetchSubscriptionContent(origin.URL)
 	if err != nil || got != "sub-content" || atomic.LoadInt32(&hits) != 1 {
 		t.Fatalf("via local proxy: got %q err=%v hits=%d", got, err, hits)
+	}
+}
+
+// 应用内更新（检查更新 / 下载 .sha256 / 下载 zip）与订阅一样只经本地 HTTP 代理，不看路由模式、不直连兜底。
+func TestUpdateRequestsAlwaysViaLocalProxy(t *testing.T) {
+	var hits int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		switch r.URL.Path {
+		case "/latest":
+			w.Write([]byte(`{"tag_name":"v9.9.9","assets":[]}`))
+		default:
+			w.Write([]byte("payload"))
+		}
+	}))
+	defer origin.Close()
+
+	oldWait, oldAPI := subProxyWait, updateLatestAPI
+	subProxyWait = 500 * time.Millisecond
+	updateLatestAPI = origin.URL + "/latest"
+	t.Cleanup(func() { subProxyWait, updateLatestAPI = oldWait, oldAPI })
+
+	a := newTestApp(t)
+	a.routingMode = "direct" // 即使是全局直连模式也走本地代理（由内核直连出站）
+	dst := filepath.Join(t.TempDir(), "x.zip")
+	if _, err := a.fetchLatestRelease(); err == nil {
+		t.Fatal("core not running: update check should fail, not go direct")
+	}
+	if _, err := a.fetchSmall(origin.URL + "/x.zip.sha256"); !errors.Is(err, subfetch.ErrProxyUnavailable) {
+		t.Fatalf("core not running: fetchSmall want ErrProxyUnavailable, got %v", err)
+	}
+	if _, err := a.downloadTo(origin.URL+"/x.zip", dst, 0, nil); !errors.Is(err, subfetch.ErrProxyUnavailable) {
+		t.Fatalf("core not running: downloadTo want ErrProxyUnavailable, got %v", err)
+	}
+	if atomic.LoadInt32(&hits) != 0 {
+		t.Fatal("origin contacted directly while the core was down")
+	}
+
+	a.mu.Lock()
+	if err := a.startCoreLocked(); err != nil {
+		a.mu.Unlock()
+		t.Fatal(err)
+	}
+	a.coreRunning = true
+	a.mu.Unlock()
+	rel, err := a.fetchLatestRelease()
+	if err != nil || rel.TagName != "v9.9.9" {
+		t.Fatalf("update check via local proxy: %+v %v", rel, err)
+	}
+	if d, err := a.fetchSmall(origin.URL + "/x.zip.sha256"); err != nil || string(d) != "payload" {
+		t.Fatalf("fetchSmall via local proxy: %q %v", d, err)
+	}
+	if _, err := a.downloadTo(origin.URL+"/x.zip", dst, 0, nil); err != nil {
+		t.Fatalf("downloadTo via local proxy: %v", err)
+	}
+	if atomic.LoadInt32(&hits) != 3 {
+		t.Fatalf("origin hits=%d, want 3 (all via the local proxy)", hits)
 	}
 }
