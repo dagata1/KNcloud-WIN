@@ -142,6 +142,16 @@ jobs:
           path: dist/*-Setup.exe
           if-no-files-found: error
 
+      - name: Stage fixed-name installer copy
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          # 固定文件名副本，内容与带版本号的 Setup.exe 完全相同。
+          # 面板后台「Windows 下载地址」可以一直填：
+          # https://github.com/dagata1/KNcloud-WIN/releases/latest/download/KNcloud-WIN-Setup.exe
+          cp "dist/KNcloud-WIN-$VERSION-Setup.exe" dist/KNcloud-WIN-Setup.exe
+          (cd dist && sha256sum "KNcloud-WIN-$VERSION-Setup.exe" KNcloud-WIN-Setup.exe)
+
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -149,7 +159,8 @@ jobs:
           files: |
             dist/*.zip
             dist/*.zip.sha256
-            dist/*-Setup.exe
+            dist/KNcloud-WIN-${{ env.VERSION }}-Setup.exe
+            dist/KNcloud-WIN-Setup.exe
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
