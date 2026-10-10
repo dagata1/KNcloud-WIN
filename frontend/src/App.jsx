@@ -1631,20 +1631,6 @@ export default function App() {
                       </button>
                     </div>
                     </div>
-                    <div className="acct-meta">
-                      <div className="acct-meta-item">
-                        <span className="acct-meta-label">剩余流量</span>
-                        <span className="acct-meta-val">{account.transferEnable > 0 ? fmtGB(Math.max(0, account.transferEnable - account.usedUp - account.usedDown)) : '无限'}</span>
-                      </div>
-                      <div className="acct-meta-item">
-                        <span className="acct-meta-label">可用节点</span>
-                        <span className="acct-meta-val">{nodes.length} 个</span>
-                      </div>
-                      <div className="acct-meta-item">
-                        <span className="acct-meta-label">上次同步</span>
-                        <span className="acct-meta-val" title={subscriptions[0]?.updatedAt || ''}>{(subscriptions[0]?.updatedAt || '—').replace(/^\d{4}-/, '')}</span>
-                      </div>
-                    </div>
                     <div className="acct-usage">
                       <div className="acct-value">
                         {fmtGB(account.usedUp + account.usedDown)}
@@ -1656,6 +1642,20 @@ export default function App() {
                             ? Math.min(100, Math.max(1, Math.round((account.usedUp + account.usedDown) * 100 / account.transferEnable))) + '%'
                             : '0%'
                         }} />
+                      </div>
+                      <div className="acct-meta">
+                        <div className="acct-meta-item">
+                          <span className="acct-meta-label">剩余流量</span>
+                          <span className="acct-meta-val">{account.transferEnable > 0 ? fmtGB(Math.max(0, account.transferEnable - account.usedUp - account.usedDown)) : '无限'}</span>
+                        </div>
+                        <div className="acct-meta-item">
+                          <span className="acct-meta-label">可用节点</span>
+                          <span className="acct-meta-val">{nodes.length} 个</span>
+                        </div>
+                        <div className="acct-meta-item">
+                          <span className="acct-meta-label">上次同步</span>
+                          <span className="acct-meta-val" title={subscriptions[0]?.updatedAt || ''}>{(subscriptions[0]?.updatedAt || '—').replace(/^\d{4}-/, '')}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
