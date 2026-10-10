@@ -1441,7 +1441,7 @@ export default function App() {
     </div>
   );
 
-  // 代理模式四选一卡片：登录后放在订阅卡右侧（实时速率上方），未登录时占满整行
+  // 代理模式四选一卡片：登录后放在订阅卡右侧（实时速率下方），未登录时占满整行
   const renderModeCard = (extraClass = '') => (
 <div className={`win11-card mode-card ${extraClass}`}>
                   <div
@@ -1630,6 +1630,20 @@ export default function App() {
                         <LogOut size={15} />
                       </button>
                     </div>
+                    </div>
+                    <div className="acct-meta">
+                      <div className="acct-meta-item">
+                        <span className="acct-meta-label">剩余流量</span>
+                        <span className="acct-meta-val">{account.transferEnable > 0 ? fmtGB(Math.max(0, account.transferEnable - account.usedUp - account.usedDown)) : '无限'}</span>
+                      </div>
+                      <div className="acct-meta-item">
+                        <span className="acct-meta-label">可用节点</span>
+                        <span className="acct-meta-val">{nodes.length} 个</span>
+                      </div>
+                      <div className="acct-meta-item">
+                        <span className="acct-meta-label">上次同步</span>
+                        <span className="acct-meta-val" title={subscriptions[0]?.updatedAt || ''}>{(subscriptions[0]?.updatedAt || '—').replace(/^\d{4}-/, '')}</span>
+                      </div>
                     </div>
                     <div className="acct-usage">
                       <div className="acct-value">
