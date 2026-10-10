@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"v2rayN-win11/internal/instlayout"
 )
 
 // 绿色版目录布局（与 v2rayN 类似，整个文件夹可随意拷贝）：
@@ -18,11 +20,13 @@ import (
 //	  configs\   config.json（账号、订阅、设置）
 //	  logs\      运行日志
 //
-// exe 所在目录不可写（如装在 Program Files）时，配置和日志回落到 %APPDATA%\KNcloud。
+// exe 所在目录不可写，或是 Setup.exe 安装版（目录里有 KNcloud.installed 标记）时，
+// 配置和日志放在 %APPDATA%\KNcloud（安装版卸载时保留）。
 
 var (
 	dataRootOnce sync.Once
 	dataRoot     string // 绿色版根目录（exe 目录）；空表示用 %APPDATA%\KNcloud
+	appRoot      string // 程序根目录（应用内更新原地替换文件用）；空表示不支持在线更新
 )
 
 func exeDir() string {
@@ -36,7 +40,7 @@ func exeDir() string {
 	return filepath.Dir(exe)
 }
 
-// legacyConfigDir 是旧版（单 exe）使用的 %APPDATA%\KNcloud。
+// legacyConfigDir 是旧版（单 exe）与安装版使用的 %APPDATA%\KNcloud。
 func legacyConfigDir() (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil {
@@ -49,9 +53,7 @@ func legacyConfigDir() (string, error) {
 	return filepath.Join(base, "KNcloud"), nil
 }
 
-// portableRoot 判定 exe 目录能否作为绿色版数据目录：能创建 configs 且可写。
-// go test 产生的临时测试程序不算（避免测试往临时目录乱写或吃掉真实配置）。
-func portableRoot() string {
+func resolveRoots() {
 	dataRootOnce.Do(func() {
 		if os.Getenv("KNCLOUD_NO_PORTABLE") != "" {
 			return
@@ -60,19 +62,27 @@ func portableRoot() string {
 		if dir == "" || isGoTestBinary() {
 			return
 		}
-		cfg := filepath.Join(dir, "configs")
-		if err := os.MkdirAll(cfg, 0755); err != nil {
-			return
+		// 安装版（目录里有安装器写的 KNcloud.installed）：数据放 %APPDATA%\KNcloud（卸载时保留），
+		// 程序目录只用于应用内更新；绿色版：数据和程序都在 exe 目录。
+		dataRoot, appRoot = instlayout.Resolve(dir)
+		if dataRoot != "" {
+			migrateLegacyConfig(filepath.Join(dataRoot, "configs"))
 		}
-		probe := filepath.Join(cfg, ".write-test")
-		if err := os.WriteFile(probe, []byte("ok"), 0644); err != nil {
-			return
-		}
-		os.Remove(probe)
-		dataRoot = dir
-		migrateLegacyConfig(cfg)
 	})
+}
+
+// portableRoot 绿色版数据根目录（exe 目录能创建 configs 且可写，且不是安装版）；空表示用 %APPDATA%\KNcloud。
+// go test 产生的临时测试程序不算（避免测试往临时目录乱写或吃掉真实配置）。
+func portableRoot() string {
+	resolveRoots()
 	return dataRoot
+}
+
+// updateRoot 应用内更新替换文件的程序根目录：绿色版与安装版（Program Files，程序以管理员运行可写）
+// 都是 exe 目录；目录不可写时为空（不支持在线更新）。
+func updateRoot() string {
+	resolveRoots()
+	return appRoot
 }
 
 func isGoTestBinary() bool {

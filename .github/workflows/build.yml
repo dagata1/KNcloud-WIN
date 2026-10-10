@@ -74,44 +74,83 @@ jobs:
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: |
-          $certificatePath = Join-Path $env:RUNNER_TEMP 'kncloud-windows-signing.pfx'
-          try {
-            if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64) -or [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)) { Write-Host '::warning::Release signing secrets are not configured; publishing unsigned.'; return 0 }
-            [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
-
-            $signTool = Get-ChildItem "$env:ProgramFiles(x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
-              Sort-Object FullName -Descending |
-              Select-Object -First 1 -ExpandProperty FullName
-            if (-not $signTool) { Write-Host '::warning::signtool.exe was not found on the runner; publishing an unsigned executable.'; exit 0 }
-
-            & $signTool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com `
-              /f $certificatePath /p $env:WINDOWS_CERTIFICATE_PASSWORD dist\KNcloud-WIN.exe
-            if ($LASTEXITCODE -ne 0) { throw "signtool sign failed with exit code $LASTEXITCODE." }
-
-            & $signTool verify /pa /v dist\KNcloud-WIN.exe
-            if ($LASTEXITCODE -ne 0) { throw "signtool verify failed with exit code $LASTEXITCODE." }
-          }
-          finally {
-            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
-          }
+        run: ./.github/scripts/sign-windows.ps1 dist\KNcloud-WIN.exe
 
       - name: Package portable folder
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME}"
           case "$GITHUB_REF" in refs/tags/*) ;; *) VERSION="${GITHUB_SHA::7}" ;; esac
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           go run ./tools/pack -exe dist/KNcloud-WIN.exe -out dist -version "$VERSION"
           rm dist/KNcloud-WIN.exe
           # 在线更新会下载并校验此文件（sha256sum 格式：<hex>  <文件名>）
           ZIP="KNcloud-WIN-$VERSION.zip"
           (cd dist && sha256sum "$ZIP" > "$ZIP.sha256" && cat "$ZIP.sha256")
 
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          $makensis = Get-Command makensis.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+          if (-not $makensis) {
+            foreach ($p in "${env:ProgramFiles(x86)}\NSIS\makensis.exe", "$env:ProgramFiles\NSIS\makensis.exe") {
+              if (Test-Path $p) { $makensis = $p; break }
+            }
+          }
+          if (-not $makensis) {
+            choco install nsis -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "choco install nsis failed ($LASTEXITCODE)" }
+            $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          }
+          if (-not (Test-Path $makensis)) { throw "makensis.exe not found" }
+          & $makensis /VERSION
+          "MAKENSIS=$makensis" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build installer (Setup.exe)
+        shell: pwsh
+        run: |
+          # 安装内容 = tools/pack 组装的绿色版文件夹（与 zip 完全一致）
+          $vi = '0.0.0.0'
+          if ($env:VERSION -match '^v?(\d+)\.(\d+)\.(\d+)') { $vi = "$($Matches[1]).$($Matches[2]).$($Matches[3]).0" }
+          $src = (Resolve-Path dist\KNcloud).Path
+          $out = Join-Path (Resolve-Path dist).Path "KNcloud-WIN-$env:VERSION-Setup.exe"
+          Push-Location build\windows\installer
+          & $env:MAKENSIS /V4 /INPUTCHARSET UTF8 "/DSRC_DIR=$src" "/DVERSION=$env:VERSION" "/DVI_VERSION=$vi" "/DOUT_FILE=$out" project.nsi
+          $code = $LASTEXITCODE
+          Pop-Location
+          if ($code -ne 0) { throw "makensis failed ($code)" }
+          Get-Item $out | Format-List Name, Length
+
+      - name: Sign installer
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: ./.github/scripts/sign-windows.ps1 "dist\KNcloud-WIN-$env:VERSION-Setup.exe"
+
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
           name: KNcloud-WIN-windows-amd64
           path: dist/KNcloud/
+
+      - name: Upload Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KNcloud-WIN-${{ env.VERSION }}-Setup
+          path: dist/*-Setup.exe
+          if-no-files-found: error
+
+      - name: Stage fixed-name installer copy
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          # 固定文件名副本，内容与带版本号的 Setup.exe 完全相同。
+          # 面板后台「Windows 下载地址」可以一直填：
+          # https://github.com/dagata1/KNcloud-WIN/releases/latest/download/KNcloud-WIN-Setup.exe
+          cp "dist/KNcloud-WIN-$VERSION-Setup.exe" dist/KNcloud-WIN-Setup.exe
+          (cd dist && sha256sum "KNcloud-WIN-$VERSION-Setup.exe" KNcloud-WIN-Setup.exe)
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -120,6 +159,8 @@ jobs:
           files: |
             dist/*.zip
             dist/*.zip.sha256
+            dist/KNcloud-WIN-${{ env.VERSION }}-Setup.exe
+            dist/KNcloud-WIN-Setup.exe
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

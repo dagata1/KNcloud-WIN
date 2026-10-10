@@ -1,129 +1,177 @@
-Unicode true
+﻿Unicode true
 
 ####
-## Please note: Template replacements don't work in this file. They are provided with default defines like
-## mentioned underneath.
-## If the keyword is not defined, "wails_tools.nsh" will populate them with the values from ProjectInfo.
-## If they are defined here, "wails_tools.nsh" will not touch them. This allows to use this project.nsi manually
-## from outside of Wails for debugging and development of the installer.
+## KNcloud-WIN 安装包（Setup.exe）。
 ##
-## For development first make a wails nsis build to populate the "wails_tools.nsh":
-## > wails build --target windows/amd64 --nsis
-## Then you can call makensis on this file with specifying the path to your binary:
-## For a AMD64 only installer:
-## > makensis -DARG_WAILS_AMD64_BINARY=..\..\bin\app.exe
-## For a ARM64 only installer:
-## > makensis -DARG_WAILS_ARM64_BINARY=..\..\bin\app.exe
-## For a installer with both architectures:
-## > makensis -DARG_WAILS_AMD64_BINARY=..\..\bin\app-amd64.exe -DARG_WAILS_ARM64_BINARY=..\..\bin\app-arm64.exe
+## 由 CI（.github/workflows/build.yml）直接用 makensis 编译，不再走 `wails build -nsis`：
+## 安装内容就是 tools/pack 组装好的绿色版文件夹（KNcloud.exe + bin\ 下的 geo 文件、wintun.dll、
+## badvpn-tun2socks.exe、许可文件……），与发布的 KNcloud-WIN-<tag>.zip 完全一致，
+## 应用内更新下载 zip 后可以原地替换安装目录里的文件。
+##
+## 本地编译（在本目录）：
+##   go run ../../../tools/pack -exe <wails 产物 exe> -out ..\..\..\dist -version v1.2.3
+##   makensis -DSRC_DIR=..\..\..\dist\KNcloud -DVERSION=v1.2.3 -DVI_VERSION=1.2.3.0 ^
+##            -DOUT_FILE=..\..\..\dist\KNcloud-WIN-v1.2.3-Setup.exe project.nsi
+##
+## 数据：安装目录里写入标记文件 KNcloud.installed，程序据此把配置 / 日志放在 %APPDATA%\KNcloud
+## （见 paths.go / internal/instlayout）。卸载时保留 %APPDATA%\KNcloud，只删程序文件。
 ####
-## The following information is taken from the ProjectInfo file, but they can be overwritten here.
-####
-## !define INFO_PROJECTNAME    "MyProject" # Default "{{.Name}}"
-## !define INFO_COMPANYNAME    "MyCompany" # Default "{{.Info.CompanyName}}"
-## !define INFO_PRODUCTNAME    "MyProduct" # Default "{{.Info.ProductName}}"
-## !define INFO_PRODUCTVERSION "1.0.0"     # Default "{{.Info.ProductVersion}}"
-## !define INFO_COPYRIGHT      "Copyright" # Default "{{.Info.Copyright}}"
-###
-## !define PRODUCT_EXECUTABLE  "Application.exe"      # Default "${INFO_PROJECTNAME}.exe"
-## !define UNINST_KEY_NAME     "UninstKeyInRegistry"  # Default "${INFO_COMPANYNAME}${INFO_PRODUCTNAME}"
-####
-## !define REQUEST_EXECUTION_LEVEL "admin"            # Default "admin"  see also https://nsis.sourceforge.io/Docs/Chapter4.html
-####
-## Include the wails tools
-####
-!include "wails_tools.nsh"
 
-# The version information for this two must consist of 4 parts
-VIProductVersion "${INFO_PRODUCTVERSION}.0"
-VIFileVersion    "${INFO_PRODUCTVERSION}.0"
+!ifndef SRC_DIR
+  !error "SRC_DIR (tools/pack 输出的 KNcloud 文件夹) 未指定"
+!endif
+!ifndef VERSION
+  !define VERSION "dev"
+!endif
+!ifndef VI_VERSION
+  !define VI_VERSION "0.0.0.0"
+!endif
+!ifndef OUT_FILE
+  !define OUT_FILE "KNcloud-WIN-${VERSION}-Setup.exe"
+!endif
 
-VIAddVersionKey "CompanyName"     "${INFO_COMPANYNAME}"
-VIAddVersionKey "FileDescription" "${INFO_PRODUCTNAME} Installer"
-VIAddVersionKey "ProductVersion"  "${INFO_PRODUCTVERSION}"
-VIAddVersionKey "FileVersion"     "${INFO_PRODUCTVERSION}"
-VIAddVersionKey "LegalCopyright"  "${INFO_COPYRIGHT}"
-VIAddVersionKey "ProductName"     "${INFO_PRODUCTNAME}"
+!define PRODUCT_NAME     "KNcloud-WIN"
+!define PRODUCT_EXE      "KNcloud.exe"              ; 与 tools/pack、应用内更新包里的 exe 名一致
+!define PRODUCT_PUBLISHER "KNcloud"
+!define INSTALL_MARKER   "KNcloud.installed"        ; 与 internal/instlayout.MarkerName 一致
+!define TASK_NAME        "KNcloud-WIN"              ; 与 internal/autostart.TaskName 一致
+!define UNINST_KEY       "Software\Microsoft\Windows\CurrentVersion\Uninstall\KNcloud-WIN"
 
-# Enable HiDPI support. https://nsis.sourceforge.io/Reference/ManifestDPIAware
+!include "MUI2.nsh"
+!include "x64.nsh"
+!include "WinVer.nsh"
+!include "FileFunc.nsh"
+!include "LogicLib.nsh"
+
+Name "${PRODUCT_NAME}"
+OutFile "${OUT_FILE}"
+InstallDir "$PROGRAMFILES64\${PRODUCT_NAME}"
+InstallDirRegKey HKLM "${UNINST_KEY}" "InstallLocation"
+RequestExecutionLevel admin
+ShowInstDetails show
+ShowUninstDetails show
+SetCompressor /SOLID lzma
 ManifestDPIAware true
 
-!include "MUI.nsh"
+VIProductVersion "${VI_VERSION}"
+VIFileVersion    "${VI_VERSION}"
+VIAddVersionKey "CompanyName"     "${PRODUCT_PUBLISHER}"
+VIAddVersionKey "FileDescription" "${PRODUCT_NAME} Installer"
+VIAddVersionKey "ProductVersion"  "${VERSION}"
+VIAddVersionKey "FileVersion"     "${VERSION}"
+VIAddVersionKey "LegalCopyright"  "${PRODUCT_PUBLISHER}"
+VIAddVersionKey "ProductName"     "${PRODUCT_NAME}"
 
 !define MUI_ICON "..\icon.ico"
 !define MUI_UNICON "..\icon.ico"
-# !define MUI_WELCOMEFINISHPAGE_BITMAP "resources\leftimage.bmp" #Include this to add a bitmap on the left side of the Welcome Page. Must be a size of 164x314
-!define MUI_FINISHPAGE_NOAUTOCLOSE # Wait on the INSTFILES page so the user can take a look into the details of the installation steps
-!define MUI_ABORTWARNING # This will warn the user if they exit from the installer.
+!define MUI_ABORTWARNING
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_EXE}"
 
-!insertmacro MUI_PAGE_WELCOME # Welcome to the installer page.
-# !insertmacro MUI_PAGE_LICENSE "resources\eula.txt" # Adds a EULA page to the installer
-!insertmacro MUI_PAGE_DIRECTORY # In which folder install page.
-!insertmacro MUI_PAGE_INSTFILES # Installing page.
-!insertmacro MUI_PAGE_FINISH # Finished installation page.
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
 
-!insertmacro MUI_UNPAGE_INSTFILES # Uinstalling page
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
 
-!insertmacro MUI_LANGUAGE "English" # Set the Language of the installer
+!insertmacro MUI_LANGUAGE "SimpChinese"
+!insertmacro MUI_LANGUAGE "English"
 
-## The following two statements can be used to sign the installer and the uninstaller. The path to the binaries are provided in %1
-#!uninstfinalize 'signtool --file "%1"'
-#!finalize 'signtool --file "%1"'
-
-Name "${INFO_PRODUCTNAME}"
-OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
-!ifdef WAILS_INSTALL_SCOPE
-  !if "${WAILS_INSTALL_SCOPE}" == "user"
-    InstallDir "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
-  !else
-    InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
-  !endif
-!else
-  InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
-!endif # Default installing folder ($PROGRAMFILES is Program Files folder).
-ShowInstDetails show # This will always show the installation details.
+; 程序正在运行时文件被占用：提示用户先从托盘退出（不强杀，避免系统代理没被还原）。
+!macro EnsureNotRunning
+  ${Do}
+    ; cmd /C 的整条命令要再包一层引号：cmd 会去掉第一个和最后一个引号，不包的话
+    ; tasklist 路径的引号被拆坏、命令执行失败（返回非 0），等于永远检测不到正在运行。
+    nsExec::ExecToStack '"$SYSDIR\cmd.exe" /C ""$SYSDIR\tasklist.exe" /FI "IMAGENAME eq ${PRODUCT_EXE}" /NH | "$SYSDIR\find.exe" /I "${PRODUCT_EXE}""'
+    Pop $0 ; find 返回 0 = 找到了正在运行的进程
+    Pop $1
+    ${If} $0 != 0
+      ${Break}
+    ${EndIf}
+    ${If} ${Silent}
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "KNcloud 正在运行。请先在托盘图标上右键「退出」，然后点「重试」。$\r$\nKNcloud is running. Please exit it from the tray icon, then click Retry." /SD IDCANCEL IDRETRY +2
+    Quit
+  ${Loop}
+!macroend
 
 Function .onInit
-   !insertmacro wails.checkArchitecture
+  ${IfNot} ${RunningX64}
+    MessageBox MB_OK|MB_ICONSTOP "KNcloud-WIN 只支持 64 位 Windows 10 / 11。"
+    Abort
+  ${EndIf}
+  ${IfNot} ${AtLeastWin10}
+    MessageBox MB_OK|MB_ICONSTOP "KNcloud-WIN 需要 Windows 10 或更高版本。"
+    Abort
+  ${EndIf}
+  SetRegView 64
 FunctionEnd
 
-Section
-    !insertmacro wails.setShellContext
+Function un.onInit
+  SetRegView 64
+FunctionEnd
 
-    !insertmacro wails.webview2runtime
+Section "Install"
+  SetShellVarContext all
+  !insertmacro EnsureNotRunning
 
-    SetOutPath $INSTDIR
+  SetOutPath "$INSTDIR"
+  ; 与便携 zip 完全一致的内容（KNcloud.exe + bin\...）
+  File /r "${SRC_DIR}\*.*"
+  ; 安装版标记：程序据此把配置 / 日志放到 %APPDATA%\KNcloud
+  FileOpen $0 "$INSTDIR\${INSTALL_MARKER}" w
+  FileWrite $0 "Installed by ${PRODUCT_NAME} Setup ${VERSION}. Settings live in %APPDATA%\KNcloud.$\r$\n"
+  FileClose $0
 
-    !insertmacro wails.files
+  CreateShortcut "$SMPROGRAMS\${PRODUCT_NAME}.lnk" "$INSTDIR\${PRODUCT_EXE}" "" "$INSTDIR\${PRODUCT_EXE}" 0
+  CreateShortcut "$DESKTOP\${PRODUCT_NAME}.lnk" "$INSTDIR\${PRODUCT_EXE}" "" "$INSTDIR\${PRODUCT_EXE}" 0
 
-    CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
-    CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
-
-    !insertmacro wails.associateFiles
-    !insertmacro wails.associateCustomProtocols
-
-    !insertmacro wails.writeUninstaller
+  WriteUninstaller "$INSTDIR\uninstall.exe"
+  WriteRegStr HKLM "${UNINST_KEY}" "DisplayName" "${PRODUCT_NAME}"
+  WriteRegStr HKLM "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
+  WriteRegStr HKLM "${UNINST_KEY}" "Publisher" "${PRODUCT_PUBLISHER}"
+  WriteRegStr HKLM "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\${PRODUCT_EXE}"
+  WriteRegStr HKLM "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKLM "${UNINST_KEY}" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
+  WriteRegStr HKLM "${UNINST_KEY}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
+  WriteRegDWORD HKLM "${UNINST_KEY}" "NoModify" 1
+  WriteRegDWORD HKLM "${UNINST_KEY}" "NoRepair" 1
+  ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
+  IntFmt $0 "0x%08X" $0
+  WriteRegDWORD HKLM "${UNINST_KEY}" "EstimatedSize" "$0"
 SectionEnd
 
 Section "uninstall"
-    !insertmacro wails.setShellContext
+  SetShellVarContext all
+  !insertmacro EnsureNotRunning
 
-    # 开机自启：删除程序创建的计划任务（新版本）与旧版本写的 HKCU Run 自启项
-    nsExec::Exec '"$SYSDIR\schtasks.exe" /Delete /TN "KNcloud-WIN" /F'
-    Pop $0
-    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "KNcloud-WIN"
-    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "KNcloud"
+  ; 开机自启：删除程序创建的计划任务 \KNcloud-WIN（新版本）与旧版本写的 HKCU Run 自启项
+  nsExec::Exec '"$SYSDIR\schtasks.exe" /Delete /TN "${TASK_NAME}" /F'
+  Pop $0
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "KNcloud-WIN"
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "KNcloud"
+  ; kncloud:// 协议（程序运行时注册在 HKCU）
+  DeleteRegKey HKCU "Software\Classes\kncloud"
 
-    RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
+  Delete "$SMPROGRAMS\${PRODUCT_NAME}.lnk"
+  Delete "$DESKTOP\${PRODUCT_NAME}.lnk"
 
-    RMDir /r $INSTDIR
+  ; 只删程序文件。用户数据在 %APPDATA%\KNcloud，保留不动；
+  ; 安装目录里万一有 configs\ / logs\（例如手动放进来的绿色版数据）也保留，RMDir 只删空目录。
+  Delete "$INSTDIR\${PRODUCT_EXE}"
+  Delete "$INSTDIR\${PRODUCT_EXE}.old"
+  Delete "$INSTDIR\${INSTALL_MARKER}"
+  RMDir /r "$INSTDIR\bin"
+  RMDir /r "$INSTDIR\update"
+  Delete "$INSTDIR\uninstall.exe"
+  RMDir "$INSTDIR"
 
-    Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
-    Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
+  ; WebView2 缓存（Wails 默认 %APPDATA%\<exe 名>，即 %APPDATA%\KNcloud.exe；不是 %APPDATA%\KNcloud）
+  SetShellVarContext current
+  RMDir /r "$APPDATA\${PRODUCT_EXE}"
 
-    !insertmacro wails.unassociateFiles
-    !insertmacro wails.unassociateCustomProtocols
-    DeleteRegKey HKCU "Software\Classes\kncloud"
-
-    !insertmacro wails.deleteUninstaller
+  DeleteRegKey HKLM "${UNINST_KEY}"
 SectionEnd
