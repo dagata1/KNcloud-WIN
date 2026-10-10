@@ -14,8 +14,9 @@ import (
 //   - proxy：开内核 + 系统代理（旧配置没有记录时也按这个，和旧版本一致）；
 //   - core：只开内核，系统代理保持关闭；
 //   - tun：开内核 + 系统代理，再按退避节奏恢复 TUN（开机时网络 / 网卡可能还没就绪）；
-//   - off：上次用户主动断开，保持断开。
-// 内核启动失败走 corefallback 的自动重试；开机自启后的前几分钟用更长的重试表。
+//   - off（旧版本记下的「断开」）：内核常开，照样开内核，只是不开系统代理（同 core）。
+// 没有节点时内核以直连配置启动；节点配置起不来时降级直连 + 自动重试（见 corefallback.go）；
+// 开机自启后的前几分钟用更长的重试表。
 
 // rememberConnStateLocked 计算并返回要持久化的连接状态（调用方持有 a.mu）。
 // 退出清理会先停内核 / 撤代理再落盘，那时的「断开」不是用户意图，不覆盖；
@@ -51,22 +52,19 @@ func (a *App) restoreConnectionOnStartup() {
 	state := connstate.Normalize(a.lastConn)
 	plan := connstate.PlanFor(state)
 	a.addLogInternal("info", fmt.Sprintf("Restoring last connection state: %s", state))
-	if !plan.StartCore {
-		a.connRestored.Store(true)
-		a.addLogInternal("info", "Last session was disconnected by the user, staying disconnected")
-		a.mu.Unlock()
-		return
-	}
+	// 内核常开：PlanFor 对任何状态都给 StartCore（off 只是不开系统代理）
 	a.tunWanted = plan.Tun
 	if err := a.startCoreLocked(); err != nil {
 		a.coreRunning = false
 		a.addLogInternal("error", fmt.Sprintf("Auto-start core failed: %v", err))
 		if plan.SystemProxy {
-			a.sysProxyPending = true // 启动本应开启系统代理：内核恢复后补上
+			a.sysProxyPending = true // 启动本应开启系统代理：内核（含直连兜底）起来后补上
 		}
 		a.handleCoreStartFailureLocked(err, true)
 		a.connRestored.Store(true)
+		a.savePersisted()
 		a.mu.Unlock()
+		a.emitRefresh()
 		if plan.Tun {
 			go a.restoreTunLoop() // TUN 启动会自己拉起内核，不必等内核重试
 		}

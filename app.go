@@ -4,10 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
-	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"v2rayN-win11/internal/subfetch"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	xcore "github.com/xtls/xray-core/core"
@@ -80,12 +79,15 @@ type CoreStatus struct {
 	TunnelMode      bool   `json:"tunnelMode"`
 	// Busy 为 true 表示有耗时操作（开关 TUN、切换策略）正在进行，其余字段是操作前的快照
 	Busy bool `json:"busy"`
-	// CoreState 内核状态：running 运行中 / stopped 已停止 / retrying 启动失败、自动重试中 / failed 启动失败
+	// CoreState 内核状态：running 运行中 / fallback 节点配置起不来、暂以直连配置运行（自动重试中）/
+	// retrying 内核完全没起来、自动重试中 / failed 启动失败 / stopped 已停止（只在退出时出现）
 	CoreState string `json:"coreState"`
-	// CoreError 启动失败原因（CoreState 为 retrying/failed 时有值）
+	// CoreError 启动失败原因（CoreState 为 fallback/retrying/failed 时有值）
 	CoreError string `json:"coreError"`
-	// CorePortError 失败原因是端口被占用：界面提示去「首选项设置」改端口
+	// CorePortError 失败原因是端口被占用且自动换端口也没找到空闲端口
 	CorePortError bool `json:"corePortError"`
+	// CoreDirectOnly 内核正以「只有直连出站」的配置运行（没选节点，或节点配置起不来）
+	CoreDirectOnly bool `json:"coreDirectOnly"`
 }
 
 type LogItem struct {
@@ -167,7 +169,9 @@ type App struct {
 
 	// 内核启动失败兜底（corefallback.go）。以下字段受 a.mu 保护。
 	coreErr         string           // 最近一次内核启动失败的原因；空表示没有失败
-	corePortErr     bool             // 失败原因是端口被占用（不自动重试，提示用户改端口）
+	corePortErr     bool             // 失败原因是端口被占用且连自动换端口都没找到空闲端口
+	coreFallback    bool             // 节点配置起不来，内核暂以「只有直连出站」的配置运行（自动重试恢复）
+	liveHTTPPort    atomic.Int32     // 正在运行的内核的 HTTP 入站端口；0 = 内核没在运行（无锁读，订阅拉取等待用）
 	coreRetrying    bool             // 正在按退避节奏自动重试
 	sysProxyPending bool             // 内核起不来时暂时撤下了系统代理（或启动时还没来得及开），内核恢复后应重新开启
 	coreRetryGen    atomic.Uint64    // 自动重试代号：换节点 / 开关内核 / 手动重启 / 退出时递增以取消正在等待的重试
@@ -623,6 +627,8 @@ func (a *App) selectNodeLocked(id string) (selected NodeItem, flushDNS bool, err
 	}
 	if err != nil {
 		a.rollbackNodeSelectionLocked(prevID, id, wasCoreRunning)
+		// 内核常开：回滚也没能把内核拉起来（或 TUN 软停后内核没起来）时降级直连 + 自动重试
+		a.ensureCoreRunningLocked()
 		a.savePersisted()
 		selected.Active = false
 		return selected, false, err
@@ -808,9 +814,12 @@ func (a *App) UpdateNode(node NodeItem) error {
 			a.handleCoreStartFailureLocked(err, true)
 			a.addLogInternal("error", fmt.Sprintf("Failed to restart core after node edit: %v", err))
 		} else {
+			a.coreRunning = true
+			a.markCoreRunningLocked(true)
 			go flushDnsClientCache()
 		}
 	}
+	a.ensureCoreRunningLocked()
 	a.savePersisted()
 	tray.requestRebuild()
 	return nil
@@ -852,11 +861,20 @@ func (a *App) DeleteNodes(ids []string) error {
 			next = &a.nodes[0]
 		}
 		if !a.tunRunning {
-			// 没用 TUN：内核是唯一出口，活动节点没了就停内核，等用户重选。
-			if a.coreRunning {
-				a.stopCoreLocked()
-				a.coreRunning = false
-				a.addLogInternal("warn", "Active node deleted, core stopped; select a node and start again")
+			// 没用 TUN：内核常开，换到剩下的第一个节点重启；一个节点都不剩就以直连配置运行。
+			a.coreRetryGen.Add(1)
+			a.coreRetrying = false
+			if err := a.startCoreLocked(); err != nil {
+				a.addLogInternal("error", fmt.Sprintf("Restart core after deleting the active node failed: %v", err))
+				a.handleCoreStartFailureLocked(err, true)
+			} else {
+				a.coreRunning = true
+				a.markCoreRunningLocked(true)
+				if next != nil {
+					a.addLogInternal("warn", fmt.Sprintf("Active node deleted, core switched to [%s] %s", next.Protocol, next.Name))
+				} else {
+					a.addLogInternal("warn", "Active node deleted and no nodes left, core keeps running direct-only")
+				}
 			}
 		} else if next != nil {
 			// TUN 在跑：依次尝试剩余节点。被拒绝（errNodeRejected）的节点不影响隧道，
@@ -883,12 +901,11 @@ func (a *App) DeleteNodes(ids []string) error {
 				a.addLogInternal("error", fmt.Sprintf("Failed to switch TUN to a surviving node after deletion, TUN stopped: %v", lastErr))
 			}
 		} else {
-			// 一个节点都不剩，没有任何东西可以代理 —— 只能停。
-			a.stopCoreLocked()
-			a.coreRunning = false
+			// 一个节点都不剩：停 TUN，内核以直连配置继续运行（软停会按无节点配置重启内核）。
 			a.tunSoftStopLocked()
-			a.addLogInternal("warn", "Active node deleted and no nodes left, TUN stopped")
+			a.addLogInternal("warn", "Active node deleted and no nodes left, TUN stopped; core keeps running direct-only")
 		}
+		a.ensureCoreRunningLocked()
 	}
 	a.addLogInternal("warn", fmt.Sprintf("Removed %d nodes", deletedCount))
 	a.savePersisted()
@@ -1046,6 +1063,8 @@ func (a *App) coreStatusLocked() CoreStatus {
 	}
 	coreState := "stopped"
 	switch {
+	case a.coreRunning && a.coreFallback:
+		coreState = "fallback" // 节点配置起不来，内核暂以直连配置运行
 	case a.coreRunning:
 		coreState = "running"
 	case a.coreRetrying:
@@ -1054,13 +1073,14 @@ func (a *App) coreStatusLocked() CoreStatus {
 		coreState = "failed"
 	}
 	coreErr := ""
-	if !a.coreRunning {
+	if !a.coreRunning || a.coreFallback {
 		coreErr = a.coreErr
 	}
 	return CoreStatus{
 		CoreState:       coreState,
 		CoreError:       coreErr,
-		CorePortError:   !a.coreRunning && a.corePortErr,
+		CorePortError:   (!a.coreRunning || a.coreFallback) && a.corePortErr,
+		CoreDirectOnly:  a.coreRunning && a.coreNodeID == "",
 		Running:         a.coreRunning || a.tunRunning,
 		CoreType:        a.settings.CoreType,
 		CoreVersion:     xrayCoreVersion(),
@@ -1075,43 +1095,43 @@ func (a *App) coreStatusLocked() CoreStatus {
 	}
 }
 
+// ToggleCore 历史接口（当前前端和托盘都不调用）。内核常开：
+//   - start=true：重启内核（失败则降级直连 + 自动重试），按当前模式重新应用系统代理；
+//   - start=false：只「断开」——停 TUN、撤系统代理，内核继续以当前配置运行（本地端口照常可用）。
 func (a *App) ToggleCore(start bool) (bool, error) {
-	a.coreRetryGen.Add(1) // 用户手动开关内核：取消自动重试
+	a.coreRetryGen.Add(1) // 用户手动操作：取消自动重试
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.coreRetrying = false
 	a.tunWanted = false // 用户手动改了连接：取消开机 TUN 恢复
 
 	if start {
-		// 合并架构：TUN 运行时内核是代理大脑，本就不应停 —— 直接确保内核在线即可
 		if err := a.startCoreLocked(); err != nil {
-			a.coreRunning = false
 			a.addLogInternal("error", fmt.Sprintf("Core start failed: %v", err))
-			a.noteCoreFailureLocked(err)
+			a.handleCoreStartFailureLocked(err, false)
 			a.savePersisted()
-			return false, err
+			return a.coreRunning, err
 		}
 		a.coreRunning = true
-		a.markCoreRunningLocked(false)
-		if a.systemProxy {
+		a.markCoreRunningLocked(true)
+		if a.systemProxy && !a.tunRunning {
 			setWindowsSystemProxy(true, fmt.Sprintf("127.0.0.1:%d", a.settings.HttpPort))
 		}
+		a.savePersisted()
+		return a.coreRunning, nil
 	}
-	if !start {
-		// 内核是 TUN 的代理大脑：停内核前先软停止 TUN（常驻网卡保留）
-		a.stopCoreLocked()
-		a.coreRunning = false
-		a.coreErr, a.corePortErr, a.sysProxyPending = "", false, false
-		if a.tunRunning {
-			a.tunSoftStopLocked()
-			a.addLogInternal("warn", "TUN soft-stopped along with core")
-		}
-		a.traffic.resetSpeed()
-		a.addLogInternal("warn", "Core stopped, no longer forwarding traffic")
-		if a.systemProxy {
-			setWindowsSystemProxy(false, "")
-		}
+	if a.tunRunning {
+		a.tunSoftStopLocked()
+		a.addLogInternal("warn", "TUN stopped (disconnect)")
 	}
+	a.tunPausedSysProxy = false
+	a.sysProxyPending = false
+	if a.systemProxy {
+		setWindowsSystemProxy(false, "")
+		a.systemProxy = false
+	}
+	a.ensureCoreRunningLocked()
+	a.addLogInternal("info", "Disconnected: system proxy off, core keeps running (local SOCKS/HTTP ports stay available)")
 	a.savePersisted()
 	return a.coreRunning, nil
 }
@@ -1191,7 +1211,11 @@ func (a *App) SetRoutingMode(mode string) (bool, error) {
 		err := a.applyRoutingLocked()
 		if err != nil && errors.Is(err, errHotSwapUnavailable) {
 			a.addLogInternal("warn", fmt.Sprintf("Live routing switch unavailable (%v), restarting core", err))
-			err = a.startCoreLocked()
+			a.coreRetryGen.Add(1)
+			a.coreRetrying = false
+			if err = a.startCoreLocked(); err == nil {
+				a.markCoreRunningLocked(true)
+			}
 		}
 		if err != nil {
 			a.addLogInternal("error", fmt.Sprintf("Failed to restart core after routing change: %v", err))
@@ -1201,6 +1225,7 @@ func (a *App) SetRoutingMode(mode string) (bool, error) {
 			return false, err
 		}
 	}
+	a.ensureCoreRunningLocked()
 	a.savePersisted()
 	return true, nil
 }
@@ -1301,6 +1326,13 @@ func (a *App) refreshSubscription(id string) error {
 	a.nodes = updated
 	a.dedupeNodeIDsLocked()
 
+	// 之前一个节点都没选（首次登录、内核以直连配置运行）：选上第一个节点，下面按它重启内核
+	noActiveBefore := !activeWasHere && a.activeNodeLocked() == nil
+	if noActiveBefore && len(a.nodes) > 0 {
+		a.setActiveNodeLocked(a.nodes[0].ID)
+		a.addLogInternal("info", fmt.Sprintf("No node was selected, selected [%s] %s from the subscription", a.nodes[0].Protocol, a.nodes[0].Name))
+	}
+
 	if activeWasHere {
 		a.activeNodeID = ""
 		for i := range a.nodes {
@@ -1321,14 +1353,8 @@ func (a *App) refreshSubscription(id string) error {
 			a.nodes[0].Active = true
 			a.activeNodeID = a.nodes[0].ID
 		}
-		if a.coreRunning && !a.tunRunning {
-			if err := a.startCoreLocked(); err != nil {
-				a.addLogInternal("error", fmt.Sprintf("Failed to restart core after subscription update: %v", err))
-				a.coreRunning = false
-				a.handleCoreStartFailureLocked(err, true)
-			} else {
-				a.addLogInternal("info", "Active node replaced by subscription refresh, core restarted")
-			}
+		if !a.tunRunning {
+			a.restartCoreAfterSubscriptionLocked("Active node replaced by subscription refresh, core restarted")
 		}
 		// 活动节点被订阅替换 → 走完整切换：活动节点的服务器地址/凭据可能已变，
 		// 存量连接必须断开，否则出口 IP 仍停在旧节点上。
@@ -1355,7 +1381,11 @@ func (a *App) refreshSubscription(id string) error {
 		} else if a.coreRunning {
 			go flushDnsClientCache()
 		}
+	} else if noActiveBefore && a.activeNodeLocked() != nil && !a.tunRunning {
+		a.restartCoreAfterSubscriptionLocked("Core switched from direct-only to the selected node")
+		go flushDnsClientCache()
 	}
+	a.ensureCoreRunningLocked()
 
 	a.addLogInternal("info", fmt.Sprintf("Subscription [%s] updated, %d nodes parsed", subName, len(nodes)))
 	a.savePersisted()
@@ -1364,56 +1394,37 @@ func (a *App) refreshSubscription(id string) error {
 	return nil
 }
 
-// fetchSubscriptionContent 拉取订阅内容：内核在跑时先走本程序的本地 HTTP 代理，
-// 代理失败（节点挂了等）再直连，避免节点全挂时订阅无法更新；内核没跑时直连。
+// restartCoreAfterSubscriptionLocked 订阅更新换了活动节点后按新节点重启内核（调用方持有写锁）；
+// 失败则降级直连 + 自动重试。
+func (a *App) restartCoreAfterSubscriptionLocked(okMsg string) {
+	a.coreRetryGen.Add(1)
+	a.coreRetrying = false
+	if err := a.startCoreLocked(); err != nil {
+		a.addLogInternal("error", fmt.Sprintf("Failed to restart core after subscription update: %v", err))
+		a.handleCoreStartFailureLocked(err, true)
+		return
+	}
+	a.coreRunning = true
+	a.markCoreRunningLocked(true)
+	a.addLogInternal("info", okMsg)
+}
+
+// subProxyWait 本地代理暂时不通（内核正在重启 / 重试）时，拉订阅最多等它多久。
+var subProxyWait = 10 * time.Second
+
+// fetchSubscriptionContent 拉取订阅内容：一律经本程序的本地 HTTP 代理（内核常开，分流 /
+// 直连由内核按当前模式决定），不直连兜底。内核正在重启时先等端口起来（最多 subProxyWait），
+// 还不通就报错。
 func (a *App) fetchSubscriptionContent(rawURL string) (string, error) {
-	var lastErr error
-	for i, c := range a.subscriptionClients(25 * time.Second) {
-		content, err := fetchSubscriptionWith(c, rawURL)
-		if err == nil {
-			return content, nil
-		}
-		lastErr = err
-		if i == 0 && c.Transport.(*http.Transport).Proxy != nil {
-			a.addLogInternal("warn", fmt.Sprintf("Subscription fetch via local proxy failed, retrying direct: %v", err))
-		}
-	}
-	return "", lastErr
-}
-
-// subscriptionClients 内核在跑就把本地 HTTP 代理放在最前面（不管分流模式），最后总是直连。
-func (a *App) subscriptionClients(timeout time.Duration) []*http.Client {
-	var out []*http.Client
-	a.mu.RLock()
-	running := a.coreRunning
-	port := a.settings.HttpPort
-	a.mu.RUnlock()
-	if running && port > 0 {
-		pu, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
-		out = append(out, &http.Client{Timeout: timeout, Transport: &http.Transport{Proxy: http.ProxyURL(pu)}})
-	}
-	return append(out, &http.Client{Timeout: timeout, Transport: &http.Transport{Proxy: nil}})
-}
-
-func fetchSubscriptionWith(client *http.Client, rawURL string) (string, error) {
-	req, err := http.NewRequest("GET", rawURL, nil)
+	content, err := subfetch.Fetch(rawURL, subfetch.Options{
+		Port:    func() int { return int(a.liveHTTPPort.Load()) },
+		Wait:    subProxyWait,
+		Timeout: 25 * time.Second,
+	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("via local proxy: %w", err)
 	}
-	req.Header.Set("User-Agent", "KNcloud-WIN/1.0")
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("HTTP %s", resp.Status)
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+	return content, nil
 }
 
 // ------------------------- Logs & Settings -------------------------
@@ -1494,30 +1505,29 @@ func (a *App) SaveSettings(settings AppSettings) error {
 			old.DnsServers != settings.DnsServers)
 
 	if needsRestart {
+		a.coreRetryGen.Add(1)
+		a.coreRetrying = false
 		if err := a.startCoreLocked(); err != nil {
 			a.addLogInternal("error", fmt.Sprintf("Failed to restart core with new settings: %v", err))
-			a.coreRunning = false
 			a.handleCoreStartFailureLocked(err, true)
-			if a.tunRunning {
+			if a.tunRunning && !a.coreRunning {
 				// 内核没起来：TUN 留着就是黑洞，软停回直连
 				a.tunSoftStopLocked()
 			}
 		} else {
+			a.coreRunning = true
+			a.markCoreRunningLocked(true)
 			a.addLogInternal("info", "Core restarted with new port/params")
 		}
 	}
-	// 系统代理开着且 HTTP 端口变了，需要刷新注册表
-	if a.systemProxy && old.HttpPort != settings.HttpPort {
-		setWindowsSystemProxy(true, fmt.Sprintf("127.0.0.1:%d", settings.HttpPort))
+	// 内核之前没起来（重试中）：按新设置立即重新拉起
+	a.ensureCoreRunningLocked()
+	// 系统代理开着，刷新注册表到当前 HTTP 端口（用户改了端口，或端口被占用时自动换过）
+	if a.systemProxy && !a.tunRunning && a.settings.HttpPort != old.HttpPort {
+		setWindowsSystemProxy(true, fmt.Sprintf("127.0.0.1:%d", a.settings.HttpPort))
 	}
-	// 内核之前因端口被占用没起来，用户改了端口：按新端口重新拉起
-	portsChanged := old.SocksPort != settings.SocksPort || old.HttpPort != settings.HttpPort
-	kickCore := !a.coreRunning && a.corePortErr && portsChanged
 	a.savePersisted()
 	tray.requestRebuild()
-	if kickCore {
-		go a.RestartCore()
-	}
 	return nil
 }
 

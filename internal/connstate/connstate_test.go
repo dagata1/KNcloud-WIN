@@ -24,7 +24,7 @@ func TestPlanFor(t *testing.T) {
 		Proxy: {StartCore: true, SystemProxy: true},
 		Core:  {StartCore: true},
 		Tun:   {StartCore: true, SystemProxy: true, Tun: true},
-		Off:   {},
+		Off:   {StartCore: true}, // 内核常开：旧版本记下的「断开」也启动内核，只是不开系统代理
 	}
 	for in, want := range cases {
 		if got := PlanFor(in); got != want {
@@ -71,5 +71,25 @@ func TestSchedules(t *testing.T) {
 		if TunRestoreSchedule[i] < TunRestoreSchedule[i-1] {
 			t.Error("TUN restore schedule should not shrink")
 		}
+	}
+}
+
+func TestCoreRetryWait(t *testing.T) {
+	sched := []time.Duration{time.Second, 2 * time.Second}
+	if w, ok := CoreRetryWait(sched, 0, true); !ok || w != time.Second {
+		t.Fatalf("i=0: %v %v", w, ok)
+	}
+	if w, ok := CoreRetryWait(sched, 1, false); !ok || w != 2*time.Second {
+		t.Fatalf("i=1: %v %v", w, ok)
+	}
+	// 内核完全没起来：表用完后一直重试
+	for _, i := range []int{2, 3, 100} {
+		if w, ok := CoreRetryWait(sched, i, true); !ok || w != SteadyCoreRetry {
+			t.Fatalf("down i=%d: %v %v", i, w, ok)
+		}
+	}
+	// 已以直连兜底运行：表用完就停
+	if _, ok := CoreRetryWait(sched, 2, false); ok {
+		t.Fatal("fallback running: retries must stop after the schedule")
 	}
 }

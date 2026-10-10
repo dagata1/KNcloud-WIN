@@ -1,46 +1,48 @@
 package main
 
 import (
-	"net"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"v2rayN-win11/internal/subfetch"
 )
 
-func TestSubscriptionFetchUsesLocalProxy(t *testing.T) {
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) }))
-	defer origin.Close()
+// 订阅一律经本地 HTTP 代理（真实内核，直连配置）；内核没在运行时等一会儿后报错，不直连。
+func TestSubscriptionFetchAlwaysViaLocalProxy(t *testing.T) {
 	var hits int32
-	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&hits, 1)
-		w.Write([]byte("via-proxy"))
+		w.Write([]byte("sub-content"))
 	}))
-	defer proxy.Close()
-	_, ps, _ := net.SplitHostPort(proxy.Listener.Addr().String())
-	port, _ := strconv.Atoi(ps)
+	defer origin.Close()
 
-	a := &App{coreRunning: true, settings: AppSettings{HttpPort: port}}
+	old := subProxyWait
+	subProxyWait = 500 * time.Millisecond
+	t.Cleanup(func() { subProxyWait = old })
+
+	a := newTestApp(t)
+	// 内核没在运行：报错，源站一次都没被直连
+	if _, err := a.fetchSubscriptionContent(origin.URL); !errors.Is(err, subfetch.ErrProxyUnavailable) {
+		t.Fatalf("core not running: want ErrProxyUnavailable, got %v", err)
+	}
+	if atomic.LoadInt32(&hits) != 0 {
+		t.Fatal("origin contacted directly while the core was down")
+	}
+
+	// 内核（无节点 → 直连配置）起来后经本地代理拉取
+	a.mu.Lock()
+	if err := a.startCoreLocked(); err != nil {
+		a.mu.Unlock()
+		t.Fatal(err)
+	}
+	a.coreRunning = true
+	a.mu.Unlock()
 	got, err := a.fetchSubscriptionContent(origin.URL)
-	if err != nil || got != "via-proxy" || hits != 1 {
-		t.Fatalf("want via proxy, got %q err=%v hits=%d", got, err, hits)
-	}
-
-	a.coreRunning = false
-	got, err = a.fetchSubscriptionContent(origin.URL)
-	if err != nil || got != "ok" {
-		t.Fatalf("core stopped: want direct, got %q err=%v", got, err)
-	}
-
-	// 代理端口不通 → 回退直连
-	ln, _ := net.Listen("tcp", "127.0.0.1:0")
-	_, ds, _ := net.SplitHostPort(ln.Addr().String())
-	ln.Close()
-	dp, _ := strconv.Atoi(ds)
-	a.coreRunning, a.settings.HttpPort = true, dp
-	got, err = a.fetchSubscriptionContent(origin.URL)
-	if err != nil || got != "ok" {
-		t.Fatalf("dead proxy: want direct fallback, got %q err=%v", got, err)
+	if err != nil || got != "sub-content" || atomic.LoadInt32(&hits) != 1 {
+		t.Fatalf("via local proxy: got %q err=%v hits=%d", got, err, hits)
 	}
 }
