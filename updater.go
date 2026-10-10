@@ -344,7 +344,7 @@ func (a *App) StartUpdate() error {
 		upd.running = false
 		upd.mu.Unlock()
 		if err != nil {
-			if root := portableRoot(); root != "" {
+			if root := updateRoot(); root != "" {
 				os.RemoveAll(filepath.Join(root, "update")) // 清掉下载/解压暂存
 			}
 			a.addLogInternal("error", fmt.Sprintf("Update to %s failed: %v", rel.TagName, err))
@@ -683,7 +683,7 @@ func checkPE(path string) error {
 
 // cleanupAfterUpdate 启动时删除上次更新留下的 .old 文件与暂存目录。返回删除的文件数。
 func cleanupAfterUpdate() int {
-	root := portableRoot()
+	root := updateRoot()
 	if root == "" {
 		return 0
 	}
@@ -714,7 +714,7 @@ func (a *App) performUpdate(rel *ghRelease) error {
 	if zipAsset == nil || sumAsset == nil {
 		return fmt.Errorf("发布中缺少安装包或校验文件")
 	}
-	root := portableRoot()
+	root := updateRoot()
 	exePath, err := os.Executable()
 	if err != nil {
 		return err
