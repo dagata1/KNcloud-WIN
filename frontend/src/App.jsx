@@ -56,7 +56,6 @@ import {
   StartAutoPing,
   IsAutoPinging,
   GetCoreStatus,
-  RestartCore,
   GetAppVersion,
   CheckForUpdate,
   StartUpdate,
@@ -318,9 +317,8 @@ export default function App() {
     }
   };
 
-  // 内核状态（仪表盘状态条与「重启内核」按钮）
+  // 内核状态（仪表盘状态条）
   const coreState = status.coreState || (status.running ? 'running' : 'stopped');
-  const coreBad = coreState !== 'running';
   const coreStateLabel = {
     running: status.coreDirectOnly ? '内核运行中 · 直连（未选节点）' : '内核运行中',
     fallback: '内核运行中 · 节点不可用，临时直连',
@@ -382,21 +380,6 @@ export default function App() {
   };
 
   // Actions
-  // 「重启内核」：停止并重新启动内核，后端按当前模式重新应用系统代理（TUN 下保持暂停）
-  const [restartingCore, setRestartingCore] = useState(false);
-  const handleRestartCore = async () => {
-    if (restartingCore) return;
-    setRestartingCore(true);
-    try {
-      await RestartCore();
-      showToast('内核已重新启动', 'success');
-    } catch (e) {
-      showToast('重启内核失败：' + (e?.message || e), 'error');
-    } finally {
-      try { setStatus(await GetCoreStatus()); } catch (_) {}
-      setRestartingCore(false);
-    }
-  };
 
   const handleThemeSelect = async (next) => {
     setThemeMenuOpen(false);
@@ -1458,6 +1441,41 @@ export default function App() {
     </div>
   );
 
+  // 代理模式四选一卡片：登录后放在订阅卡右侧（实时速率下方），未登录时占满整行
+  const renderModeCard = (extraClass = '') => (
+<div className={`win11-card mode-card ${extraClass}`}>
+                  <div
+                    className={`segmented-control mode-switch mode-switch-full ${pendingMode ? 'busy' : ''}`}
+                    role="radiogroup"
+                    aria-busy={!!pendingMode}
+                  >
+                    <span
+                      className="segment-indicator"
+                      aria-hidden="true"
+                      style={{ transform: `translateX(calc(${modeIndex} * (100% + 4px)))` }}
+                    />
+                    {[
+                      { id: 'bypass-cn', label: '绕过大陆' },
+                      { id: 'global', label: '全局代理' },
+                      { id: 'direct', label: '全局直连' },
+                      { id: 'tun', label: 'TUN 模式', title: '虚拟网卡全局接管整机流量（需管理员权限）' },
+                    ].map(m => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={shownMode === m.id}
+                        className={`segment-btn ${shownMode === m.id ? 'active' : ''}`}
+                        onClick={() => handleModeSelect(m.id)}
+                        title={m.title}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+              </div>
+  );
+
   return (
     <div className={`app-window ${theme === 'dark' ? 'dark-theme' : ''}`}>
       {renderToasts()}
@@ -1555,16 +1573,6 @@ export default function App() {
                 <div className={`core-status core-${coreState}`}>
                   <span className="core-dot" aria-hidden="true" />
                   <span className="core-label" title={status.coreError || ''}>{coreStateLabel}</span>
-                  <button
-                    type="button"
-                    className={`win11-btn core-restart-btn ${coreBad ? 'primary' : ''}`}
-                    onClick={handleRestartCore}
-                    disabled={restartingCore}
-                    title="停止并重新启动 Xray 内核，按当前模式重新应用系统代理"
-                  >
-                    <RefreshCw size={13} className={restartingCore ? 'spin' : ''} />
-                    {restartingCore ? '重启中…' : '重启内核'}
-                  </button>
                 </div>
               </div>
 
@@ -1578,8 +1586,8 @@ export default function App() {
                   {status.coreError && <div className="core-error-reason">{status.coreError}</div>}
                   <div className="core-error-hint">
                     {coreState === 'fallback'
-                      ? '本地端口照常可用，流量暂时全部直连。程序会自动重试当前节点，也可以换个节点或点击「重启内核」。'
-                      : '程序会持续自动重试，也可以立即点击「重启内核」。期间系统代理已暂时关闭，避免断网。'}
+                      ? '本地端口照常可用，流量暂时全部直连。程序会自动重试当前节点，也可以换个节点。'
+                      : '程序会持续自动重试。期间系统代理已暂时关闭，避免断网。'}
                   </div>
                 </div>
               )}
@@ -1635,6 +1643,20 @@ export default function App() {
                             : '0%'
                         }} />
                       </div>
+                      <div className="acct-meta">
+                        <div className="acct-meta-item">
+                          <span className="acct-meta-label">剩余流量</span>
+                          <span className="acct-meta-val">{account.transferEnable > 0 ? fmtGB(Math.max(0, account.transferEnable - account.usedUp - account.usedDown)) : '无限'}</span>
+                        </div>
+                        <div className="acct-meta-item">
+                          <span className="acct-meta-label">可用节点</span>
+                          <span className="acct-meta-val">{nodes.length} 个</span>
+                        </div>
+                        <div className="acct-meta-item">
+                          <span className="acct-meta-label">上次同步</span>
+                          <span className="acct-meta-val" title={subscriptions[0]?.updatedAt || ''}>{(subscriptions[0]?.updatedAt || '—').replace(/^\d{4}-/, '')}</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                   <div className="win11-card acct-stat" title="仅统计经代理节点的流量">
@@ -1647,42 +1669,13 @@ export default function App() {
                     <div className="acct-speed">{status.downSpeed}</div>
                     <div className="acct-sub">本地累计下行: {status.totalDown}</div>
                   </div>
+                  {renderModeCard('acct-mode')}
                 </div>
               )}
 
 
-              {/* 代理模式：四个互斥按钮占满整行（状态由高亮按钮本身表达，不再单独展示） */}
-              <div className="win11-card mode-card">
-                  <div
-                    className={`segmented-control mode-switch mode-switch-full ${pendingMode ? 'busy' : ''}`}
-                    role="radiogroup"
-                    aria-busy={!!pendingMode}
-                  >
-                    <span
-                      className="segment-indicator"
-                      aria-hidden="true"
-                      style={{ transform: `translateX(calc(${modeIndex} * (100% + 4px)))` }}
-                    />
-                    {[
-                      { id: 'bypass-cn', label: '绕过大陆' },
-                      { id: 'global', label: '全局代理' },
-                      { id: 'direct', label: '全局直连' },
-                      { id: 'tun', label: 'TUN 模式', title: '虚拟网卡全局接管整机流量（需管理员权限）' },
-                    ].map(m => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={shownMode === m.id}
-                        className={`segment-btn ${shownMode === m.id ? 'active' : ''}`}
-                        onClick={() => handleModeSelect(m.id)}
-                        title={m.title}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
-              </div>
+              {/* 未登录时没有订阅卡，模式切换单独占满整行 */}
+              {!(account && account.loggedIn) && renderModeCard()}
 
               {/* 未登录时没有订阅卡，实时速率单独成一张小卡 */}
               {!(account && account.loggedIn) && (
@@ -1693,11 +1686,9 @@ export default function App() {
               <div className="win11-card">
                 <div className="qp-header">
                   <div className="qp-title">
-                    <h3>推荐节点快速选择</h3>
-                    {pingInProgress ? (
+                    <h3>节点选择</h3>
+                    {pingInProgress && (
                       <span className="qp-testing"><LoaderCircle size={12} className="spin" />测速中…</span>
-                    ) : (
-                      <span className="qp-hint">按延迟排序 · 点击切换</span>
                     )}
                   </div>
                   <div className="qp-actions">

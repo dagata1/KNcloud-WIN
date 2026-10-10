@@ -16,6 +16,7 @@ import (
 //   - tun：开内核 + 系统代理，再按退避节奏恢复 TUN（开机时网络 / 网卡可能还没就绪）；
 //   - off（旧版本记下的「断开」）：内核常开，照样开内核，只是不开系统代理（同 core）。
 // 没有节点时内核以直连配置启动；节点配置起不来时降级直连 + 自动重试（见 corefallback.go）；
+// 连直连配置都起不来就弹窗报错并退出程序；
 // 开机自启后的前几分钟用更长的重试表。
 
 // rememberConnStateLocked 计算并返回要持久化的连接状态（调用方持有 a.mu）。
@@ -61,6 +62,12 @@ func (a *App) restoreConnectionOnStartup() {
 			a.sysProxyPending = true // 启动本应开启系统代理：内核（含直连兜底）起来后补上
 		}
 		a.handleCoreStartFailureLocked(err, true)
+		if !a.coreRunning && !a.exiting() {
+			// 连直连兜底都起不来：直接报错退出，不在后台空转
+			a.mu.Unlock()
+			a.startupCoreFatal(err)
+			return
+		}
 		a.connRestored.Store(true)
 		a.savePersisted()
 		a.mu.Unlock()

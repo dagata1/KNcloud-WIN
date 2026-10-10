@@ -20,10 +20,11 @@ import (
 //   - 端口被别的程序占用：启动时自动换到空闲端口并写回设置（ensureCorePortsLocked），
 //     系统代理随之指向新端口；
 //   - 节点配置起不来（协议桥失败、配置错误……）：立即降级为直连配置运行（coreFallback），
-//     再按退避节奏重试节点配置；重试表用完仍不行就保持直连运行，等用户换节点或「重启内核」；
-//   - 连直连配置都起不来（极少见）：撤下系统代理避免整机断网，然后一直重试
+//     再按退避节奏重试节点配置；重试表用完仍不行就保持直连运行，等用户换节点；
+//   - 启动时连直连配置都起不来：弹窗报错「内核无法启动」并退出程序（startupCoreFatal）；
+//   - 运行中连直连配置都起不来（极少见）：撤下系统代理避免整机断网，然后一直重试
 //     （先按重试表，之后每 connstate.SteadyCoreRetry 一次），直到内核起来或程序退出。
-// 换节点 / 手动重启内核 / 退出都会让正在等待的重试作废（coreRetryGen）。
+// 换节点 / 内部重启内核 / 退出都会让正在等待的重试作废（coreRetryGen）。
 
 // coreRetryBackoff 自动重试前的等待时间（第 1、2、3 次重试）。
 var coreRetryBackoff = []time.Duration{2 * time.Second, 5 * time.Second, 15 * time.Second}
@@ -249,16 +250,16 @@ func (a *App) coreRetryLoop(gen uint64) {
 	a.mu.Lock()
 	if a.coreRetryGen.Load() == gen && a.coreFallback {
 		a.coreRetrying = false
-		a.addLogInternal("error", "Node still cannot start the core after all retries; core stays running direct-only. Pick another node or use 「重启内核」")
+		a.addLogInternal("error", "Node still cannot start the core after all retries; core stays running direct-only. Pick another node")
 		a.mu.Unlock()
-		a.emitToast("当前节点仍无法启动内核，内核保持直连运行。可换个节点或点击「重启内核」重试", "error")
+		a.emitToast("当前节点仍无法启动内核，内核保持直连运行。可换个节点", "error")
 		a.emitRefresh()
 		return
 	}
 	a.mu.Unlock()
 }
 
-// RestartCore 「重启内核」：停止并重新启动内核，成功后按当前模式重新应用系统代理
+// RestartCore 停止并重新启动内核（界面已无按钮，仅供换节点 / 更新回滚等内部路径调用）：停止并重新启动内核，成功后按当前模式重新应用系统代理
 // （TUN 运行时系统代理保持暂停，由 TUN 逻辑负责）。会取消正在等待的自动重试。
 // 失败时内核降级为直连配置继续运行（或一直重试），并把原因返回给界面。
 func (a *App) RestartCore() (CoreStatus, error) {
@@ -293,4 +294,19 @@ func (a *App) RestartCore() (CoreStatus, error) {
 	a.mu.Unlock()
 	a.emitRefresh()
 	return a.GetCoreStatus(), nil
+}
+
+// startupCoreFatal 启动时内核（含直连兜底配置）完全起不来：弹窗报错后退出程序。
+// 内核是程序的核心，起不来就没有继续运行的意义，不再在后台无限重试。
+func (a *App) startupCoreFatal(err error) {
+	a.coreRetryGen.Add(1) // 取消已安排的自动重试
+	a.addLogInternal("error", fmt.Sprintf("Core cannot start, exiting: %v", err))
+	if ctx := a.appCtx(); ctx != nil {
+		runtime.MessageDialog(ctx, runtime.MessageDialogOptions{
+			Type:    runtime.ErrorDialog,
+			Title:   "KNcloud 无法启动",
+			Message: fmt.Sprintf("内核无法启动，程序将退出。\n\n原因：%v", err),
+		})
+	}
+	a.quitApp()
 }
