@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1232,7 +1233,7 @@ func (a *App) refreshSubscription(id string) error {
 	subName := sub.Name
 	a.mu.RUnlock()
 
-	content, err := fetchSubscriptionContent(subURL)
+	content, err := a.fetchSubscriptionContent(subURL)
 	if err != nil {
 		a.mu.Lock()
 		a.addLogInternal("error", fmt.Sprintf("Subscription [%s] fetch failed: %v", subName, err))
@@ -1363,9 +1364,39 @@ func (a *App) refreshSubscription(id string) error {
 	return nil
 }
 
-func fetchSubscriptionContent(url string) (string, error) {
-	client := &http.Client{Timeout: 25 * time.Second}
-	req, err := http.NewRequest("GET", url, nil)
+// fetchSubscriptionContent 拉取订阅内容：内核在跑时先走本程序的本地 HTTP 代理，
+// 代理失败（节点挂了等）再直连，避免节点全挂时订阅无法更新；内核没跑时直连。
+func (a *App) fetchSubscriptionContent(rawURL string) (string, error) {
+	var lastErr error
+	for i, c := range a.subscriptionClients(25 * time.Second) {
+		content, err := fetchSubscriptionWith(c, rawURL)
+		if err == nil {
+			return content, nil
+		}
+		lastErr = err
+		if i == 0 && c.Transport.(*http.Transport).Proxy != nil {
+			a.addLogInternal("warn", fmt.Sprintf("Subscription fetch via local proxy failed, retrying direct: %v", err))
+		}
+	}
+	return "", lastErr
+}
+
+// subscriptionClients 内核在跑就把本地 HTTP 代理放在最前面（不管分流模式），最后总是直连。
+func (a *App) subscriptionClients(timeout time.Duration) []*http.Client {
+	var out []*http.Client
+	a.mu.RLock()
+	running := a.coreRunning
+	port := a.settings.HttpPort
+	a.mu.RUnlock()
+	if running && port > 0 {
+		pu, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
+		out = append(out, &http.Client{Timeout: timeout, Transport: &http.Transport{Proxy: http.ProxyURL(pu)}})
+	}
+	return append(out, &http.Client{Timeout: timeout, Transport: &http.Transport{Proxy: nil}})
+}
+
+func fetchSubscriptionWith(client *http.Client, rawURL string) (string, error) {
+	req, err := http.NewRequest("GET", rawURL, nil)
 	if err != nil {
 		return "", err
 	}
