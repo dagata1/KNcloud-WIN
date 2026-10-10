@@ -1843,9 +1843,10 @@ select.win11-input option {
 /* 订阅卡中部：剩余流量 / 可用节点 / 上次同步 */
 .acct-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
 .acct-meta-item {
-  display: flex; flex-direction: column; gap: 4px; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; text-align: center; gap: 4px; min-width: 0;
 }
-.acct-meta-item + .acct-meta-item { padding-left: 12px; border-left: 1px solid var(--border-subtle); }
+.acct-meta-item + .acct-meta-item { border-left: 1px solid var(--border-subtle); }
+.acct-meta-item > span { max-width: 100%; }
 .acct-meta-label { font-size: 11px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acct-meta-val {
   font-size: 13px; font-weight: 600; color: var(--text-primary);
