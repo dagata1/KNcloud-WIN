@@ -32,6 +32,9 @@ type persistedConfig struct {
 	SubscriptionURLs map[string]string `json:"subscriptionUrls,omitempty"`
 	// SubLastUpdate 上次成功更新订阅的时间（Unix 秒）。持久化后每周更新的计时跨重启有效。
 	SubLastUpdate int64 `json:"subLastUpdate,omitempty"`
+	// LastConn 上次的连接状态（off / core / proxy / tun，见 internal/connstate），启动时据此自动恢复。
+	// 旧配置没有该字段：按 proxy（内核 + 系统代理）恢复，与旧版本「启动即连接」一致。
+	LastConn string `json:"lastConn,omitempty"`
 }
 
 func configFilePath() string {
@@ -80,6 +83,7 @@ func (a *App) loadPersisted() bool {
 		a.routingMode = cfg.RoutingMode
 	}
 	a.activeNodeID = cfg.ActiveNodeID
+	a.lastConn = cfg.LastConn
 	a.subLastAuto.Store(cfg.SubLastUpdate)
 	// 旧口径（入站计数 / TUN 网卡计数）累计的数字含直连流量、方向也可能反了，直接作废
 	if cfg.StatsVersion >= trafficStatsVersion && (cfg.TotalUp > 0 || cfg.TotalDown > 0) {
@@ -193,6 +197,7 @@ func (a *App) savePersisted() {
 		StatsVersion:  trafficStatsVersion,
 		Account:       &a.account,
 		SubLastUpdate: a.subLastAuto.Load(),
+		LastConn:      a.rememberConnStateLocked(),
 	}
 	// 凭证加密后落盘。加密失败时宁可不写：安全功能必须 fail-closed，
 	// 退回明文等于这道防护从未存在。代价只是下次启动需重新登录。

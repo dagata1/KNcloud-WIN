@@ -108,6 +108,12 @@ SectionEnd
 Section "uninstall"
     !insertmacro wails.setShellContext
 
+    # 开机自启：删除程序创建的计划任务（新版本）与旧版本写的 HKCU Run 自启项
+    nsExec::Exec '"$SYSDIR\schtasks.exe" /Delete /TN "KNcloud-WIN" /F'
+    Pop $0
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "KNcloud-WIN"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "KNcloud"
+
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 
     RMDir /r $INSTDIR

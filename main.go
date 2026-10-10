@@ -9,6 +9,8 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
+
+	"v2rayN-win11/internal/autostart"
 )
 
 //go:embed all:frontend/dist
@@ -36,9 +38,14 @@ func main() {
 	}
 
 	// 未运行时由 kncloud:// 协议直接启动：窗口就绪后处理链接
-	if link := findDeepLinkArg(os.Args[1:]); link != "" {
+	link := findDeepLinkArg(os.Args[1:])
+	if link != "" {
 		go app.handleDeepLink(link)
 	}
+
+	// 开机自启（计划任务带 --autostart）：窗口隐藏创建，只放托盘，不打扰刚登录的用户。
+	// 带深链时以深链为准正常显示窗口（深链登录需要用户确认）。
+	app.startHidden = link == "" && autostart.HasArg(os.Args[1:])
 
 	err := wails.Run(&options.App{
 		Title:     "KNcloud-WIN",
@@ -47,6 +54,8 @@ func main() {
 		MinWidth:  380, // 简易模式需要缩到紧凑尺寸（前端切换模式时自动调整）
 		MinHeight: 560,
 		Frameless: true, // 自定义 Win11 沉浸式标题栏
+		// 开机自启时不弹主窗口；托盘图标单击 / 菜单「显示主界面」或再次双击程序都会唤出
+		StartHidden: app.startHidden,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
@@ -61,6 +70,12 @@ func main() {
 				// 网页「一键订阅」拉起的第二个进程会把 kncloud:// 链接带过来
 				if link := findDeepLinkArg(d.Args); link != "" {
 					go app.handleDeepLink(link)
+					return
+				}
+				// 计划任务的自启实例撞上已在运行的主实例（例如注销后快速重新登录）：
+				// 静默忽略，不要把窗口弹到用户面前
+				if autostart.HasArg(d.Args) {
+					app.addLogInternal("info", "Auto-start launch ignored: already running")
 					return
 				}
 				go app.focusFromSecondInstance()

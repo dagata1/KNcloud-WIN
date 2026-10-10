@@ -155,6 +155,12 @@ type App struct {
 	quitting       atomic.Bool   // true 表示用户已确认退出（托盘菜单「退出」），关闭窗口不再拦截
 	cleaned        atomic.Bool   // true 表示已执行退出清理，避免 beforeClose 与 quitApp 兜底重复执行
 	uiCtx          atomic.Value  // context.Context：Wails 运行时 ctx 的无锁副本（窗口操作用，见 appCtx）
+	autoStartErr   atomic.Value  // string：最近一次配置开机自启失败的原因（空串表示正常），设置页据此提示
+	startHidden    bool          // 由开机自启（--autostart）拉起：不弹主窗口，只放托盘
+	startedAt      time.Time     // 进程启动时间（开机自启后前几分钟内核重试更耐心）
+	lastConn       string        // 上次的连接状态（connstate.Off/Core/Proxy/Tun），持久化为 lastConn；受 a.mu 保护
+	tunWanted      bool          // 开机要恢复 TUN 且用户还没改过连接方式（恢复失败也保留意图）；受 a.mu 保护
+	connRestored   atomic.Bool   // 启动恢复已决定：此前的 savePersisted 不覆盖 lastConn
 	minimizeToTray atomic.Bool   // settings.MinimizeToTray 的无锁镜像（beforeClose 可能跑在 UI 线程，不能等 a.mu）
 	switchGen      atomic.Uint64 // 换节点请求代号：新请求会让仍在排队等锁的旧请求直接放弃（见 SelectNode）
 
@@ -169,6 +175,7 @@ type App struct {
 
 func NewApp() *App {
 	app := &App{
+		startedAt:    time.Now(),
 		coreRunning:  false,
 		systemProxy:  getWindowsSystemProxy(),
 		routingMode:  "bypass-cn",
@@ -269,11 +276,18 @@ func (a *App) startup(ctx context.Context) {
 	a.mu.Unlock()
 	a.uiCtx.Store(ctx)
 
-	// 开机自启：以持久化设置为准同步注册表 Run 键（首次运行默认开启；
-	// 程序换了安装路径也会在这里把自启项更新到新 exe）。需在托盘构建前执行，
-	// 这样托盘菜单的勾选状态与设置页一致。
-	if err := setAutoStart(a.settings.AutoStart); err != nil {
-		a.addLogInternal("error", fmt.Sprintf("Sync auto-start failed: %v", err))
+	// 开机自启：以持久化设置为准同步计划任务（首次运行默认开启；程序换了安装路径
+	// 也会在这里把任务更新到新 exe；旧版本写的 HKCU Run 键在这里迁移成计划任务并删除）。
+	// 需在托盘构建前执行，这样托盘菜单的勾选状态与设置页一致。
+	if changed, err := syncAutoStartOnStartup(a.settings.AutoStart); err != nil {
+		a.noteAutoStartResult(err, "Sync auto-start")
+	} else {
+		a.autoStartErr.Store("")
+		if changed && a.settings.AutoStart {
+			a.addLogInternal("info", "Auto-start scheduled task \""+autostartTaskName+"\" created/updated")
+		} else if changed {
+			a.addLogInternal("info", "Auto-start scheduled task removed")
+		}
 	}
 
 	// 注册 kncloud:// 协议，网页「一键订阅」可直接拉起客户端登录并导入订阅
@@ -283,6 +297,13 @@ func (a *App) startup(ctx context.Context) {
 
 	// 系统托盘：右下角常驻图标 + 右键菜单
 	startTray(a)
+
+	// 开机自启拉起时窗口是隐藏创建的（StartHidden），只放托盘；托盘没起来就把窗口显示出来，
+	// 免得程序在后台跑着却找不到入口。
+	if a.startHidden {
+		a.addLogInternal("info", "Started by Windows logon auto-start, staying in the tray")
+		go a.showWindowIfTrayMissing(10 * time.Second)
+	}
 
 	// 真实内核流量统计轮询：每秒采样一次 proxy 出站计数器（只算经节点的流量，见 traffic.go）
 	go func() {
@@ -332,41 +353,9 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}()
 
-	// 启动即自动开启内核与系统代理（用户无需手动操作）。
-	// a.mu 只在改内核状态时持有；写注册表 / 通知 WinINet 放到锁外，避免启动期间
-	// 所有界面绑定（GetNodes、SelectNode……）和退出都排队等这把锁。
-	go func() {
-		a.mu.Lock()
-		if err := a.startCoreLocked(); err != nil {
-			a.coreRunning = false
-			a.addLogInternal("error", fmt.Sprintf("Auto-start core failed: %v", err))
-			a.sysProxyPending = true // 启动本应开启系统代理：内核恢复后补上
-			a.handleCoreStartFailureLocked(err, true)
-			a.mu.Unlock()
-			return
-		}
-		a.coreRunning = true
-		a.markCoreRunningLocked(false)
-		server := fmt.Sprintf("127.0.0.1:%d", a.settings.HttpPort)
-		a.mu.Unlock()
-
-		if a.quitting.Load() {
-			return
-		}
-		err := setWindowsSystemProxy(true, server)
-		a.mu.Lock()
-		if err != nil {
-			a.addLogInternal("error", fmt.Sprintf("Failed to auto-enable system proxy: %v", err))
-		} else if a.quitting.Load() || a.cleaned.Load() {
-			// 退出清理已经跑过：别把系统代理留在开启状态
-			setWindowsSystemProxy(false, "")
-		} else {
-			a.systemProxy = true
-			a.addLogInternal("info", fmt.Sprintf("System proxy auto-enabled -> %s", server))
-		}
-		a.savePersisted()
-		a.mu.Unlock()
-	}()
+	// 启动即按上次的连接状态自动恢复（系统代理 / TUN / 仅内核 / 断开），用户无需手动操作；
+	// 旧配置没有记录时按「内核 + 系统代理」连接，与旧版本一致。见 connrestore.go。
+	go a.restoreConnectionOnStartup()
 }
 
 func formatSpeed(bytesPerSec int64) string {
@@ -1090,6 +1079,7 @@ func (a *App) ToggleCore(start bool) (bool, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.coreRetrying = false
+	a.tunWanted = false // 用户手动改了连接：取消开机 TUN 恢复
 
 	if start {
 		// 合并架构：TUN 运行时内核是代理大脑，本就不应停 —— 直接确保内核在线即可
@@ -1155,6 +1145,7 @@ func (a *App) ToggleSystemProxy(enable bool) (bool, error) {
 func (a *App) SetRoutingMode(mode string) (bool, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.tunWanted = false // 选策略 = 回到系统代理模式：取消开机 TUN 恢复
 
 	// 合法策略：内置三种 + SSTap 规则文件（sstap:<rules 文件路径>）
 	valid := mode == "bypass-cn" || mode == "global" || mode == "direct" || mode == "proxy-cn" ||
@@ -1448,16 +1439,19 @@ func (a *App) SaveSettings(settings AppSettings) error {
 	a.minimizeToTray.Store(settings.MinimizeToTray)
 	a.addLogInternal("info", "Preferences saved")
 
-	// 开机自启：设置项是唯一事实来源，变更时同步写入 / 移除注册表 Run 键；
-	// 写注册表失败则回滚设置，避免界面显示与实际自启状态不一致。
+	// 开机自启：设置项是唯一事实来源，变更时创建 / 删除计划任务（见 autostart_windows.go）；
+	// 失败则回滚设置并记下原因（设置页提示），避免界面显示与实际自启状态不一致。
 	if old.AutoStart != settings.AutoStart {
-		if err := setAutoStart(settings.AutoStart); err != nil {
+		if err := setAutoStart(settings.AutoStart); err != nil && !errors.Is(err, errLegacyCleanup) {
 			a.settings.AutoStart = old.AutoStart
-			a.addLogInternal("error", fmt.Sprintf("Update auto-start failed: %v", err))
-		} else if settings.AutoStart {
-			a.addLogInternal("info", "Auto-start on Windows logon enabled")
+			a.noteAutoStartResult(err, "Update auto-start")
 		} else {
-			a.addLogInternal("info", "Auto-start on Windows logon disabled")
+			a.noteAutoStartResult(err, "Update auto-start") // nil 或仅旧 Run 键清理失败（记警告）
+			if settings.AutoStart {
+				a.addLogInternal("info", "Auto-start on Windows logon enabled (scheduled task)")
+			} else {
+				a.addLogInternal("info", "Auto-start on Windows logon disabled")
+			}
 		}
 	}
 
@@ -1494,6 +1488,40 @@ func (a *App) SaveSettings(settings AppSettings) error {
 		go a.RestartCore()
 	}
 	return nil
+}
+
+// noteAutoStartResult 记录配置开机自启的结果：失败写日志并留给设置页提示，成功清空提示。
+// 仅旧 Run 键清理失败（errLegacyCleanup）时任务本身已生效，只记警告、不提示。
+func (a *App) noteAutoStartResult(err error, what string) {
+	switch {
+	case err == nil:
+		a.autoStartErr.Store("")
+	case errors.Is(err, errLegacyCleanup):
+		a.autoStartErr.Store("")
+		a.addLogInternal("warn", fmt.Sprintf("%s: %v", what, err))
+	default:
+		a.autoStartErr.Store(err.Error())
+		a.addLogInternal("error", fmt.Sprintf("%s failed: %v", what, err))
+	}
+}
+
+// GetAutoStartError 返回最近一次配置开机自启失败的原因；空串表示正常。设置页用它提示用户。
+func (a *App) GetAutoStartError() string {
+	s, _ := a.autoStartErr.Load().(string)
+	return s
+}
+
+// showWindowIfTrayMissing 开机自启隐藏启动后，等托盘就绪；超时仍没有托盘就显示主窗口兜底。
+func (a *App) showWindowIfTrayMissing(wait time.Duration) {
+	deadline := time.Now().Add(wait)
+	for time.Now().Before(deadline) {
+		if tray.available() {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	a.addLogInternal("warn", "Tray icon not ready after auto-start, showing the main window")
+	a.showMainWindow()
 }
 
 // ------------------------- Lifecycle -------------------------
