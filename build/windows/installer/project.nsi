@@ -1,4 +1,4 @@
-Unicode true
+﻿Unicode true
 
 ####
 ## KNcloud-WIN 安装包（Setup.exe）。

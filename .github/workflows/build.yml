@@ -115,7 +115,7 @@ jobs:
           $src = (Resolve-Path dist\KNcloud).Path
           $out = Join-Path (Resolve-Path dist).Path "KNcloud-WIN-$env:VERSION-Setup.exe"
           Push-Location build\windows\installer
-          & $env:MAKENSIS /V3 "/DSRC_DIR=$src" "/DVERSION=$env:VERSION" "/DVI_VERSION=$vi" "/DOUT_FILE=$out" project.nsi
+          & $env:MAKENSIS /V4 /INPUTCHARSET UTF8 "/DSRC_DIR=$src" "/DVERSION=$env:VERSION" "/DVI_VERSION=$vi" "/DOUT_FILE=$out" project.nsi
           $code = $LASTEXITCODE
           Pop-Location
           if ($code -ne 0) { throw "makensis failed ($code)" }
