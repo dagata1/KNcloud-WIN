@@ -14,6 +14,7 @@ import {
   Menu,
   Sun,
   Moon,
+  Monitor,
   Minus,
   Square,
   X,
@@ -105,9 +106,47 @@ export default function App() {
     ? (d < 300 ? '#3fbf6f' : d < 800 ? '#e5a50a' : '#ff6b6b')
     : d === -2 ? '#ff6b6b' : 'var(--text-tertiary)';
 
-  const [theme, setTheme] = useState('dark');
+  // 主题偏好：system=跟随系统（默认）/ light / dark；theme 为实际生效的主题（只有 light / dark）
+  const [themePref, setThemePref] = useState('system');
+  const [systemDark, setSystemDark] = useState(() => {
+    try { return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches); }
+    catch (_) { return false; }
+  });
+  const theme = themePref === 'system' ? (systemDark ? 'dark' : 'light') : themePref;
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const themeMenuRef = useRef(null);
   const brandLogo = theme === 'dark' ? kncLoginDark : kncLoginLight;
   const loginLogo = theme === 'dark' ? kncLoginDark : kncLoginLight;
+  // 跟随系统：监听系统深浅色切换，实时更新（WebView2 支持 prefers-color-scheme 变化事件）
+  useEffect(() => {
+    if (!window.matchMedia) return undefined;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = e => setSystemDark(e.matches);
+    setSystemDark(mq.matches);
+    if (mq.addEventListener) mq.addEventListener('change', onChange);
+    else if (mq.addListener) mq.addListener(onChange);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener('change', onChange);
+      else if (mq.removeListener) mq.removeListener(onChange);
+    };
+  }, []);
+  // 主题菜单：点菜单外部或按 Esc 关闭
+  useEffect(() => {
+    if (!themeMenuOpen) return undefined;
+    const onDown = e => {
+      if (themeMenuRef.current && !themeMenuRef.current.contains(e.target)) setThemeMenuOpen(false);
+    };
+    const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); setThemeMenuOpen(false); } };
+    const onBlur = () => setThemeMenuOpen(false); // 切出窗口也收起
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('keydown', onKey, true);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      document.removeEventListener('mousedown', onDown, true);
+      document.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, [themeMenuOpen]);
   const [uiMode, setUiMode] = useState('simple'); // classic=普通模式, simple=简易模式（登录后默认简洁）
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -312,8 +351,8 @@ export default function App() {
       if (curAccount) setAccount(curAccount);
       if (curSettings) {
         setLocalSettings(curSettings);
-        if (curSettings.theme === 'light') setTheme('light');
-        else if (curSettings.theme === 'dark') setTheme('dark');
+        // 已保存的 light / dark 保持不变；system、空值或未知值都按跟随系统处理
+        setThemePref(curSettings.theme === 'light' || curSettings.theme === 'dark' ? curSettings.theme : 'system');
         // 按持久化的模式 + 登录态统一决定窗口尺寸：
         //   未登录 → 登录页紧凑尺寸；已登录 → 简洁模式紧凑尺寸 / 普通模式默认尺寸
         // （此前只在 uiMode==='simple' 时调整，classic 持久化的简单模式下窗口不会缩小）
@@ -359,15 +398,60 @@ export default function App() {
     }
   };
 
-  const handleThemeToggle = async () => {
-    const next = theme === 'dark' ? 'light' : 'dark';
-    setTheme(next);
+  const handleThemeSelect = async (next) => {
+    setThemeMenuOpen(false);
+    if (next === themePref) return;
+    setThemePref(next);
     try {
       await SaveSettings({ ...settings, theme: next });
       setLocalSettings(prev => ({ ...prev, theme: next }));
     } catch (e) {
       // 主题切换失败不影响使用
     }
+  };
+
+  // 标题栏主题按钮 + 下拉菜单（浅色 / 深色 / 跟随系统），简易模式和普通模式共用
+  const THEME_OPTIONS = [
+    { key: 'light', label: '浅色', Icon: Sun },
+    { key: 'dark', label: '深色', Icon: Moon },
+    { key: 'system', label: '跟随系统', Icon: Monitor },
+  ];
+  const renderThemeMenu = () => {
+    const cur = THEME_OPTIONS.find(o => o.key === themePref) || THEME_OPTIONS[2];
+    const CurIcon = cur.Icon;
+    const title = themePref === 'system'
+      ? `主题：跟随系统（当前${theme === 'dark' ? '深色' : '浅色'}）`
+      : `主题：${cur.label}`;
+    return (
+      <div className="theme-menu-wrap" ref={themeMenuRef}>
+        <button
+          className={`theme-toggle-btn ${themeMenuOpen ? 'open' : ''}`}
+          onClick={() => setThemeMenuOpen(o => !o)}
+          title={title}
+          aria-haspopup="menu"
+          aria-expanded={themeMenuOpen}
+        >
+          <CurIcon size={15} />
+        </button>
+        {themeMenuOpen && (
+          <div className="theme-menu" role="menu">
+            {THEME_OPTIONS.map(({ key, label, Icon }) => (
+              <button
+                key={key}
+                role="menuitemradio"
+                aria-checked={themePref === key}
+                className={`theme-menu-item ${themePref === key ? 'active' : ''}`}
+                onClick={() => handleThemeSelect(key)}
+              >
+                <Icon size={15} className="theme-menu-icon" />
+                <span className="theme-menu-label">{label}</span>
+                <span className="theme-menu-check">{themePref === key && <Check size={14} />}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   const handleUiModeToggle = async () => {
@@ -1221,9 +1305,7 @@ export default function App() {
             <button className="theme-toggle-btn" onClick={handleUiModeToggle} title="切换到普通模式（完整设置）">
               <SlidersHorizontal size={15} />
             </button>
-            <button className="theme-toggle-btn" onClick={handleThemeToggle} title="切换浅色 / 深色主题">
-              {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
-            </button>
+            {renderThemeMenu()}
             <button className="win-caption-btn" onClick={() => WindowMin()} title="最小化">
               <Minus size={13} />
             </button>
@@ -1391,13 +1473,7 @@ export default function App() {
           <button className="theme-toggle-btn" onClick={handleUiModeToggle} title="切换到简易模式（点击即用）">
             <LayoutGrid size={15} />
           </button>
-          <button
-            className="theme-toggle-btn"
-            onClick={handleThemeToggle}
-            title="切换浅色 / 深色主题"
-          >
-            {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
-          </button>
+          {renderThemeMenu()}
           <button className="win-caption-btn" onClick={() => WindowMin()} title="最小化">
             <Minus size={13} />
           </button>
