@@ -81,7 +81,9 @@ VIAddVersionKey "ProductName"     "${PRODUCT_NAME}"
 ; 程序正在运行时文件被占用：提示用户先从托盘退出（不强杀，避免系统代理没被还原）。
 !macro EnsureNotRunning
   ${Do}
-    nsExec::ExecToStack '"$SYSDIR\cmd.exe" /C "$SYSDIR\tasklist.exe" /FI "IMAGENAME eq ${PRODUCT_EXE}" /NH | "$SYSDIR\find.exe" /I "${PRODUCT_EXE}"'
+    ; cmd /C 的整条命令要再包一层引号：cmd 会去掉第一个和最后一个引号，不包的话
+    ; tasklist 路径的引号被拆坏、命令执行失败（返回非 0），等于永远检测不到正在运行。
+    nsExec::ExecToStack '"$SYSDIR\cmd.exe" /C ""$SYSDIR\tasklist.exe" /FI "IMAGENAME eq ${PRODUCT_EXE}" /NH | "$SYSDIR\find.exe" /I "${PRODUCT_EXE}""'
     Pop $0 ; find 返回 0 = 找到了正在运行的进程
     Pop $1
     ${If} $0 != 0
