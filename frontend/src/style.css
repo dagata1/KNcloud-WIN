@@ -1676,9 +1676,12 @@ select.win11-input option {
 
 /* ---------- 订阅卡：左半账户/流量/操作，右半实时速率 ---------- */
 .acct-split { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 16px; }
-/* 订阅卡占左侧两行加高；模式切换收窄放在右侧实时速率下方 */
-.acct-split > .acct-left { grid-row: span 2; justify-content: space-between; padding: 18px 20px 20px; }
-.acct-split > .acct-mode { grid-column: 2 / span 2; margin: 0; padding: 6px; }
+/* 订阅卡占左侧两行加高；模式切换收窄放在右侧实时速率上方 */
+.acct-split > .acct-left { grid-column: 1; grid-row: 1 / span 2; justify-content: space-between; padding: 18px 20px 20px; }
+.acct-split > .acct-mode { grid-column: 2 / span 2; grid-row: 1; margin: 0; padding: 6px; }
+.acct-split > .acct-stat { grid-row: 2; }
+.acct-split > .acct-stat:nth-of-type(2) { grid-column: 2; }
+.acct-split > .acct-stat:nth-of-type(3) { grid-column: 3; }
 .acct-mode .mode-switch.mode-switch-full .segment-btn { min-height: 44px; font-size: 14px; padding: 0 6px; }
 .acct-left { padding: 14px 20px 18px; margin: 0; justify-content: center; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 .acct-id { display: flex; align-items: center; gap: 8px; min-width: 0; }

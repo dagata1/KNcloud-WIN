@@ -1441,7 +1441,7 @@ export default function App() {
     </div>
   );
 
-  // 代理模式四选一卡片：登录后放在订阅卡右侧（实时速率下方），未登录时占满整行
+  // 代理模式四选一卡片：登录后放在订阅卡右侧（实时速率上方），未登录时占满整行
   const renderModeCard = (extraClass = '') => (
 <div className={`win11-card mode-card ${extraClass}`}>
                   <div
