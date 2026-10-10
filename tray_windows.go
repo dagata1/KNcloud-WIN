@@ -239,14 +239,6 @@ func (t *trayController) buildMenu() {
 
 	systray.AddSeparator()
 
-	// ---------- 重启内核（与仪表盘「重启内核」一致；内核未运行时标出状态） ----------
-	coreLabel := "重启内核"
-	if !coreRunning {
-		coreLabel = "重启内核（内核未运行）"
-	}
-	miCore := systray.AddMenuItem(coreLabel, "停止并重新启动 Xray 内核，按当前模式重新应用系统代理")
-	miCore.Click(func() { go a.trayRestartCore() })
-
 	miQuit := systray.AddMenuItem("退出", "退出程序并还原系统代理")
 	miQuit.Click(func() { go a.quitApp() })
 }
@@ -280,18 +272,6 @@ func (a *App) traySetTun() {
 func (a *App) traySelectNode(id string) {
 	if _, err := a.SelectNode(id); err != nil && !errors.Is(err, errSwitchSuperseded) {
 		a.addLogInternal("error", fmt.Sprintf("Tray: switch node failed: %v", err))
-	}
-	a.notifyFrontend()
-	tray.requestRebuild()
-}
-
-// trayRestartCore 托盘「重启内核」。
-func (a *App) trayRestartCore() {
-	if _, err := a.RestartCore(); err != nil {
-		a.addLogInternal("error", fmt.Sprintf("Tray: restart core failed: %v", err))
-		a.emitToast("重启内核失败："+err.Error(), "error")
-	} else {
-		a.emitToast("内核已重新启动", "success")
 	}
 	a.notifyFrontend()
 	tray.requestRebuild()
