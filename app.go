@@ -181,7 +181,7 @@ func NewApp() *App {
 		routingMode:  "bypass-cn",
 		activeNodeID: "",
 		settings: AppSettings{
-			Theme:      "dark",
+			Theme:      "system", // 新安装默认跟随系统
 			UiMode:     "classic",
 			SocksPort:  10808,
 			HttpPort:   10809,
@@ -1419,8 +1419,11 @@ func (a *App) SaveSettings(settings AppSettings) error {
 	if settings.HttpPort <= 0 || settings.HttpPort > 65535 {
 		settings.HttpPort = old.HttpPort
 	}
-	if settings.Theme == "" {
+	if !validTheme(settings.Theme) {
 		settings.Theme = old.Theme
+		if !validTheme(settings.Theme) {
+			settings.Theme = "system"
+		}
 	}
 	if settings.UiMode != "classic" && settings.UiMode != "simple" {
 		settings.UiMode = old.UiMode
@@ -1703,4 +1706,9 @@ func (a *App) IsWindowMaximized() bool {
 		return runtime.WindowIsMaximised(ctx)
 	}
 	return false
+}
+
+// validTheme 主题偏好只接受 system（跟随系统）/ light / dark
+func validTheme(t string) bool {
+	return t == "system" || t == "light" || t == "dark"
 }

@@ -71,6 +71,10 @@ func (a *App) loadPersisted() bool {
 		a.subscriptions = []SubscriptionItem{}
 	}
 	a.settings = cfg.Settings
+	// 旧配置里已保存的 light / dark 保持不变；缺失或无效时按跟随系统处理
+	if !validTheme(a.settings.Theme) {
+		a.settings.Theme = "system"
+	}
 	// 旧版本配置文件里没有 minimizeToTray 字段：默认开启「关闭窗口最小化到托盘」
 	if !settingsHasKey(data, "minimizeToTray") {
 		a.settings.MinimizeToTray = true
