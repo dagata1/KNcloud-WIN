@@ -6,7 +6,7 @@ import "time"
 
 // 持久化在 config.json 的 lastConn 字段里的取值。
 const (
-	Off   = "off"   // 用户主动断开（停内核）：下次启动保持断开
+	Off   = "off"   // 旧版本：用户主动断开。内核现在常开，启动时按「仅内核」恢复（系统代理不开）
 	Core  = "core"  // 内核运行、系统代理关闭（用户自己配 SOCKS/HTTP 端口用）
 	Proxy = "proxy" // 内核运行 + 系统代理（默认，也是旧版本「启动即连接」的行为）
 	Tun   = "tun"   // TUN 接管整机流量
@@ -29,13 +29,12 @@ type Plan struct {
 	Tun         bool
 }
 
-// PlanFor 根据上次状态给出恢复计划。TUN 也先开系统代理：TUN 起来后会把它暂停并记住，
+// PlanFor 根据上次状态给出恢复计划。内核常开：任何状态（包括旧版本记下的 off）都启动内核，
+// off 只是不开系统代理。TUN 也先开系统代理：TUN 起来后会把它暂停并记住，
 // 用户以后关 TUN 时按原样恢复成系统代理模式（与手动先连接再开 TUN 的流程一致）。
 func PlanFor(state string) Plan {
 	switch Normalize(state) {
-	case Off:
-		return Plan{}
-	case Core:
+	case Off, Core:
 		return Plan{StartCore: true}
 	case Tun:
 		return Plan{StartCore: true, SystemProxy: true, Tun: true}
@@ -84,6 +83,24 @@ var TunRestoreSchedule = []time.Duration{
 var BootCoreRetrySchedule = []time.Duration{
 	2 * time.Second, 5 * time.Second, 10 * time.Second, 15 * time.Second,
 	30 * time.Second, 30 * time.Second, 60 * time.Second, 60 * time.Second,
+}
+
+// SteadyCoreRetry 重试表用完后内核仍完全没有运行（连直连兜底配置都起不来）时的固定重试间隔：
+// 内核必须常开，所以这种情况一直重试下去，直到起来或程序退出。
+const SteadyCoreRetry = 60 * time.Second
+
+// CoreRetryWait 第 i 次（从 0 起）自动重试前的等待。
+//   - i 在重试表内：按表等待；
+//   - 重试表用完、内核完全没在运行（coreDown）：以 SteadyCoreRetry 无限重试；
+//   - 重试表用完、内核已以直连兜底配置运行：停止重试（ok=false），等用户换节点或手动重启。
+func CoreRetryWait(schedule []time.Duration, i int, coreDown bool) (wait time.Duration, ok bool) {
+	if i < len(schedule) {
+		return schedule[i], true
+	}
+	if coreDown {
+		return SteadyCoreRetry, true
+	}
+	return 0, false
 }
 
 // Total 返回一个重试表的累计等待时长。
