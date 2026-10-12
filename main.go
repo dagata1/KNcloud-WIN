@@ -59,7 +59,7 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		BackgroundColour: &options.RGBA{R: 243, G: 243, B: 243, A: 0}, // 透明底色配合 Mica
+		BackgroundColour: &options.RGBA{R: 243, G: 243, B: 243, A: 255}, // 不透明底色，不用 Mica 玻璃效果
 		OnStartup:        app.startup,
 		OnBeforeClose:    app.beforeClose,
 		// 托盘常驻后台：用户重复双击图标时唤出已运行实例，
@@ -85,9 +85,9 @@ func main() {
 			app,
 		},
 		Windows: &windows.Options{
-			WebviewIsTransparent:              true,
-			WindowIsTranslucent:               true,
-			BackdropType:                      windows.Mica, // Windows 11 云母材质！
+			WebviewIsTransparent:              false,
+			WindowIsTranslucent:               false,
+			BackdropType:                      windows.None, // 不透明窗口，不用云母 / 亚克力玻璃效果
 			Theme:                             windows.SystemDefault,
 			DisableFramelessWindowDecorations: false, // 保留 Windows 11 原生圆角与阴影
 		},

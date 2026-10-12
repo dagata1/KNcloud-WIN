@@ -84,7 +84,7 @@ import {
   WindowMax,
   WindowClose
 } from '../wailsjs/go/main/App';
-import { EventsOn, WindowSetSize, WindowUnmaximise, WindowIsMaximised, BrowserOpenURL } from '../wailsjs/runtime';
+import { EventsOn, WindowSetSize, WindowUnmaximise, WindowIsMaximised, WindowGetSize, WindowGetPosition, WindowSetPosition, BrowserOpenURL } from '../wailsjs/runtime';
 
 const protoLabel = (n) => (n.protocol === 'HTTP' && n.security === 'tls') ? 'HTTPS' : n.protocol;
 
@@ -97,8 +97,21 @@ export default function App() {
     // 窗口处于最大化时 SetSize 不生效，会一直停在大尺寸；先还原成普通窗口。
     // 只在确实最大化时还原：Wails 的 Unmaximise 会顺带 ShowWindow，开机自启隐藏在托盘时
     // 无条件调用会把主窗口弹出来。
-    try { if (await WindowIsMaximised()) await WindowUnmaximise(); } catch (e) { /* 忽略 */ }
+    let wasMax = false;
+    try { wasMax = await WindowIsMaximised(); if (wasMax) await WindowUnmaximise(); } catch (e) { /* 忽略 */ }
+    // 以窗口中心为固定点缩放：先记下旧中心，改尺寸后再把窗口移回去，
+    // 避免简易 / 普通模式切换时窗口贴着左上角伸缩
+    let center = null;
+    if (!wasMax) {
+      try {
+        const [pos, size] = await Promise.all([WindowGetPosition(), WindowGetSize()]);
+        if (pos && size && size.w > 0 && size.h > 0) center = { x: pos.x + size.w / 2, y: pos.y + size.h / 2 };
+      } catch (e) { /* 忽略 */ }
+    }
     WindowSetSize(s.w, s.h);
+    if (center) {
+      WindowSetPosition(Math.max(0, Math.round(center.x - s.w / 2)), Math.max(0, Math.round(center.y - s.h / 2)));
+    }
   };
 
   // 节点延迟的展示文字与配色（简易模式节点下拉用）
