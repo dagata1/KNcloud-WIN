@@ -424,7 +424,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
-  padding: 28px 56px;
+  padding: 20px 56px;
   background: transparent;
 }
 

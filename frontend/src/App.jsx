@@ -1507,7 +1507,6 @@ export default function App() {
       {/* Windows 11 TitleBar */}
       <header className="titlebar drag-region">
         <div className="titlebar-left">
-          <img src={brandLogo} alt="KNcloud-WIN" className="no-drag" onClick={() => setActiveTab('dashboard')} title="返回仪表盘" style={{ height: "22px", width: "auto", display: "block", cursor: "pointer" }} />
         </div>
 
 
