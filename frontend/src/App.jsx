@@ -42,6 +42,8 @@ import {
   Gauge,
   LogOut,
   CircleHelp,
+  ArrowLeft,
+  List,
 } from 'lucide-react';
 
 import {
@@ -82,7 +84,7 @@ import {
   WindowMax,
   WindowClose
 } from '../wailsjs/go/main/App';
-import { EventsOn, WindowSetSize, WindowUnmaximise, WindowIsMaximised, BrowserOpenURL } from '../wailsjs/runtime';
+import { EventsOn, WindowSetSize, WindowUnmaximise, WindowIsMaximised, WindowGetSize, WindowGetPosition, WindowSetPosition, BrowserOpenURL } from '../wailsjs/runtime';
 
 const protoLabel = (n) => (n.protocol === 'HTTP' && n.security === 'tls') ? 'HTTPS' : n.protocol;
 
@@ -95,8 +97,21 @@ export default function App() {
     // 窗口处于最大化时 SetSize 不生效，会一直停在大尺寸；先还原成普通窗口。
     // 只在确实最大化时还原：Wails 的 Unmaximise 会顺带 ShowWindow，开机自启隐藏在托盘时
     // 无条件调用会把主窗口弹出来。
-    try { if (await WindowIsMaximised()) await WindowUnmaximise(); } catch (e) { /* 忽略 */ }
+    let wasMax = false;
+    try { wasMax = await WindowIsMaximised(); if (wasMax) await WindowUnmaximise(); } catch (e) { /* 忽略 */ }
+    // 以窗口中心为固定点缩放：先记下旧中心，改尺寸后再把窗口移回去，
+    // 避免简易 / 普通模式切换时窗口贴着左上角伸缩
+    let center = null;
+    if (!wasMax) {
+      try {
+        const [pos, size] = await Promise.all([WindowGetPosition(), WindowGetSize()]);
+        if (pos && size && size.w > 0 && size.h > 0) center = { x: pos.x + size.w / 2, y: pos.y + size.h / 2 };
+      } catch (e) { /* 忽略 */ }
+    }
     WindowSetSize(s.w, s.h);
+    if (center) {
+      WindowSetPosition(Math.max(0, Math.round(center.x - s.w / 2)), Math.max(0, Math.round(center.y - s.h / 2)));
+    }
   };
 
   // 节点延迟的展示文字与配色（简易模式节点下拉用）
@@ -1479,13 +1494,20 @@ export default function App() {
               </div>
   );
 
+  const inSettings = activeTab === 'settings' || activeTab === 'routing' || activeTab === 'logs';
+  const settingsTabs = [
+    { id: 'settings', label: '常规设置' },
+    { id: 'routing', label: '路由分流' },
+    { id: 'logs', label: '实时日志' },
+  ];
+
   return (
     <div className={`app-window ${theme === 'dark' ? 'dark-theme' : ''}`}>
       {renderToasts()}
       {/* Windows 11 TitleBar */}
       <header className="titlebar drag-region">
         <div className="titlebar-left">
-          <img src={brandLogo} alt="KNcloud-WIN" style={{ height: "22px", width: "auto", display: "block" }} />
+          <img src={brandLogo} alt="KNcloud-WIN" className="no-drag" onClick={() => setActiveTab('dashboard')} title="返回仪表盘" style={{ height: "22px", width: "auto", display: "block", cursor: "pointer" }} />
         </div>
 
 
@@ -1493,6 +1515,13 @@ export default function App() {
         <div className="titlebar-right no-drag">
           <button className="theme-toggle-btn" onClick={handleUiModeToggle} title="切换到简易模式（点击即用）">
             <LayoutGrid size={15} />
+          </button>
+          <button
+            className={`theme-toggle-btn ${inSettings ? 'open' : ''}`}
+            onClick={() => setActiveTab(inSettings ? 'dashboard' : 'settings')}
+            title={inSettings ? '返回仪表盘' : '首选项设置'}
+          >
+            <Settings size={15} />
           </button>
           {renderThemeMenu()}
           <button className="win-caption-btn" onClick={() => WindowMin()} title="最小化">
@@ -1509,63 +1538,31 @@ export default function App() {
 
       {/* Main Body */}
       <div className="app-body">
-        {/* Left Windows 11 Navigation Bar */}
-        <nav className={`nav-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
-          <div className="nav-top-actions">
-            <button
-              className="hamburger-btn"
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              title="展开 / 折叠侧边栏"
-            >
-              <Menu size={16} />
-            </button>
-
-            <div className="nav-items-list">
-              <button
-                className={`nav-item-btn ${activeTab === 'dashboard' ? 'active' : ''}`}
-                onClick={() => setActiveTab('dashboard')}
-              >
-                <Activity size={17} />
-                {!sidebarCollapsed && <span>仪表盘</span>}
-              </button>
-              <button
-                className={`nav-item-btn ${activeTab === 'servers' ? 'active' : ''}`}
-                onClick={() => setActiveTab('servers')}
-              >
-                <Server size={17} />
-                {!sidebarCollapsed && <span>节点列表</span>}
-              </button>
-              <button
-                className={`nav-item-btn ${activeTab === 'routing' ? 'active' : ''}`}
-                onClick={() => setActiveTab('routing')}
-              >
-                <GitFork size={17} />
-                {!sidebarCollapsed && <span>路由分流</span>}
-              </button>
-
-              <button
-                className={`nav-item-btn ${activeTab === 'logs' ? 'active' : ''}`}
-                onClick={() => setActiveTab('logs')}
-              >
-                <Terminal size={17} />
-                {!sidebarCollapsed && <span>实时日志</span>}
-              </button>
-            </div>
-          </div>
-
-          <div className="nav-footer-area">
-            <button
-              className={`nav-item-btn ${activeTab === 'settings' ? 'active' : ''}`}
-              onClick={() => setActiveTab('settings')}
-            >
-              <Settings size={17} />
-              {!sidebarCollapsed && <span>首选项设置</span>}
-            </button>
-          </div>
-        </nav>
 
         {/* Right Main Content */}
         <main className="content-surface">
+          {/* 设置页子导航：常规设置 / 路由分流 / 实时日志 */}
+          {inSettings && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
+              <button className="win11-btn qp-icon-btn" onClick={() => setActiveTab('dashboard')} title="返回仪表盘">
+                <ArrowLeft size={14} />
+              </button>
+              <div className="segmented-control" role="tablist">
+                {settingsTabs.map(t => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === t.id}
+                    className={`segment-btn ${activeTab === t.id ? 'active' : ''}`}
+                    onClick={() => setActiveTab(t.id)}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {/* TAB 1: DASHBOARD */}
           {activeTab === 'dashboard' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -1697,6 +1694,13 @@ export default function App() {
                   <div className="qp-actions">
                     <button
                       className="win11-btn qp-icon-btn"
+                      onClick={() => setActiveTab('servers')}
+                      title="节点列表（编辑 / 导入 / 批量管理）"
+                    >
+                      <List size={13} />
+                    </button>
+                    <button
+                      className="win11-btn qp-icon-btn"
                       onClick={handleRetestAll}
                       disabled={pingInProgress || nodes.length === 0}
                       title="重新测速全部节点"
@@ -1752,6 +1756,9 @@ export default function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div className="content-header" style={{ marginBottom: '4px', alignItems: 'center', gap: '16px' }}>
                 <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button className="win11-btn qp-icon-btn" onClick={() => setActiveTab('dashboard')} title="返回仪表盘">
+                    <ArrowLeft size={14} />
+                  </button>
                   <h1 className="content-title" style={{ margin: 0 }}>节点列表</h1>
                   {/* 操作说明收进 ?：悬停（桌面）或点击显示 */}
                   <span className="help-pop" tabIndex={0} aria-label="操作说明">
