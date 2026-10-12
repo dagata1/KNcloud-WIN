@@ -1568,7 +1568,7 @@ export default function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div className="content-header">
                 <div>
-                  <h1 className="content-title">运行状态概览</h1>
+                  <h1 className="content-title" style={{ margin: 0, lineHeight: 0 }}><img src={brandLogo} alt="KNcloud" style={{ height: "30px", width: "auto", display: "block", marginLeft: "-6px" }} /></h1>
                 </div>
                 <div className={`core-status core-${coreState}`}>
                   <span className="core-dot" aria-hidden="true" />
