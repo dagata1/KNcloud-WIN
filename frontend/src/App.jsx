@@ -33,7 +33,6 @@ import {
   Check,
   Copy,
   Pencil,
-  Power,
   ChevronDown,
   LayoutGrid,
   SlidersHorizontal,
@@ -1343,9 +1342,7 @@ export default function App() {
             onClick={handleSimpleConnect}
             title={simpleOn ? '点击切换到全局直连' : '点击开启分流代理（绕过大陆）'}
           >
-            {simpleOn && (simpleNet === 'checking' || simpleNet === 'ok')
-              ? <SimpleCloudIcon />
-              : <Power size={56} />}
+            <SimpleCloudIcon />
           </button>
 
           <div
