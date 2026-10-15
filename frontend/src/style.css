@@ -92,7 +92,8 @@ body {
   width: 100vw;
   background-color: var(--bg-mica);
   overflow: hidden;
-  border-radius: 8px;
+  /* 不在网页层做圆角：Win11 已由系统裁出原生圆角，网页再圆角会在四角露出窗口底色（白色小角） */
+  border-radius: 0;
   border: 1px solid var(--border-subtle);
   /* 在主题作用域内解析文字色，避免子元素继承 body 的浅色主题黑字 */
   color: var(--text-primary);

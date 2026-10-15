@@ -83,7 +83,7 @@ import {
   WindowMax,
   WindowClose
 } from '../wailsjs/go/main/App';
-import { EventsOn, WindowSetSize, WindowUnmaximise, WindowIsMaximised, WindowGetSize, WindowGetPosition, WindowSetPosition, BrowserOpenURL } from '../wailsjs/runtime';
+import { EventsOn, WindowSetBackgroundColour, WindowSetSize, WindowUnmaximise, WindowIsMaximised, WindowGetSize, WindowGetPosition, WindowSetPosition, BrowserOpenURL } from '../wailsjs/runtime';
 
 const protoLabel = (n) => (n.protocol === 'HTTP' && n.security === 'tls') ? 'HTTPS' : n.protocol;
 
@@ -103,8 +103,22 @@ export default function App() {
   // 简易模式内容少，窗口切到紧凑尺寸；普通模式恢复默认大小
   // （全局最小尺寸在 main.go 里放开了到 380x560，这里的目标值在其之上）
   const WINDOW_SIZE = { simple: { w: 420, h: 640 }, classic: { w: 1120, h: 760 } };
+  // 按屏幕分辨率等比例缩放窗口：以 1920×1040 工作区（1080p 去掉任务栏）为基准，
+  // 宽高同一比例缩放保持窗口比例；不超过工作区 92%，不小于全局最小尺寸 380×560。
+  // screen.avail* 是 CSS 像素（已除以 DPI 缩放），与 WindowSetSize 的逻辑像素一致。
+  const scaledWindowSize = (base) => {
+    const aw = (window.screen && window.screen.availWidth) || 1920;
+    const ah = (window.screen && window.screen.availHeight) || 1040;
+    let k = Math.min(aw / 1920, ah / 1040);
+    k = Math.min(Math.max(k, 0.75), 2);
+    k = Math.min(k, (aw * 0.92) / base.w, (ah * 0.92) / base.h);
+    return {
+      w: Math.max(380, Math.round(base.w * k)),
+      h: Math.max(560, Math.round(base.h * k)),
+    };
+  };
   const applyWindowSize = async (mode) => {
-    const s = WINDOW_SIZE[mode] || WINDOW_SIZE.classic;
+    const s = scaledWindowSize(WINDOW_SIZE[mode] || WINDOW_SIZE.classic);
     // 窗口处于最大化时 SetSize 不生效，会一直停在大尺寸；先还原成普通窗口。
     // 只在确实最大化时还原：Wails 的 Unmaximise 会顺带 ShowWindow，开机自启隐藏在托盘时
     // 无条件调用会把主窗口弹出来。
@@ -138,6 +152,13 @@ export default function App() {
     catch (_) { return false; }
   });
   const theme = themePref === 'system' ? (systemDark ? 'dark' : 'light') : themePref;
+  // 窗口底色跟随主题（与 --bg-mica 一致），避免深色主题下系统圆角边缘透出浅色底
+  useEffect(() => {
+    try {
+      if (theme === 'dark') WindowSetBackgroundColour(32, 32, 32, 255);
+      else WindowSetBackgroundColour(243, 243, 243, 255);
+    } catch (_) { /* 忽略 */ }
+  }, [theme]);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const themeMenuRef = useRef(null);
   const brandLogo = theme === 'dark' ? kncLoginDark : kncLoginLight;
