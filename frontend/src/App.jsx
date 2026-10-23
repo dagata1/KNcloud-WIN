@@ -1596,7 +1596,7 @@ export default function App() {
           )}
           {/* TAB 1: DASHBOARD */}
           {activeTab === 'dashboard' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div className="dash-fill" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div className="content-header">
                 <div>
                   <h1 className="content-title" style={{ margin: 0, lineHeight: 0 }}><img src={brandLogo} alt="KNcloud" style={{ height: "30px", width: "auto", display: "block", marginLeft: "-6px" }} /></h1>
@@ -1714,7 +1714,7 @@ export default function App() {
               )}
 
               {/* Quick Node Switcher in Dashboard：全部节点紧凑网格，点击即切换 */}
-              <div className="win11-card">
+              <div className="win11-card qp-card">
                 <div className="qp-header">
                   <div className="qp-title">
                     <h3>节点选择</h3>
