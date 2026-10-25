@@ -1934,6 +1934,22 @@ select.win11-input option {
   border-bottom: 1px solid transparent;
   transition: border-color 0.15s ease;
 }
+.settings-back {
+  /* 与右侧分段导航同高、同底色，看起来是一组 */
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: rgba(128, 128, 128, 0.1);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.settings-back:hover { color: var(--text-primary); background: rgba(128, 128, 128, 0.18); }
+.settings-back:focus { outline: none; }
 .settings-topbar.scrolled { border-bottom-color: var(--border-subtle); }
 .settings-tabs .segment-btn { min-height: 34px; padding: 0 20px; font-size: 13px; }
 .settings-topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }

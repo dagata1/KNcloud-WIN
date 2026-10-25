@@ -1613,8 +1613,8 @@ export default function App() {
           {/* 设置页顶栏（吸顶，不随内容滚走）：返回 / 子导航 / 当前页操作 */}
           {inSettings && (
             <div className={`settings-topbar ${settingsScrolled ? 'scrolled' : ''}`}>
-              <button className="win11-btn qp-icon-btn" onClick={() => setActiveTab('dashboard')} title="返回仪表盘">
-                <ArrowLeft size={14} />
+              <button className="settings-back" onClick={() => setActiveTab('dashboard')} title="返回仪表盘">
+                <ArrowLeft size={16} />
               </button>
               <div className="segmented-control settings-tabs" role="tablist">
                 {settingsTabs.map(t => (
