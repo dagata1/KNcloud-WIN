@@ -1,9 +1,10 @@
 import kncFgBlack from './assets/knc-fg-black.png';
+import { tr, trMsg, setCurrentLang, detectSystemLang, normalizeLangPref, loadCachedLangPref, cacheLangPref, LANG_OPTIONS } from './i18n';
 import kncFgWhite from './assets/knc-fg-white.png';
 import kncLoginDark from './assets/knc-login-dark.png';
 import kncLoginLight from './assets/knc-login-light.png';
 import React, { useState, useEffect, useRef } from 'react';
-import { Shield, Activity, Server, GitFork, BookOpen, Terminal, Settings, Menu, Sun, Moon, Monitor, Minus, Square, X, Play, Pause, RefreshCw, Plus, Trash2, Zap, Globe, ArrowUpRight, ArrowDownLeft, CheckCircle2, Sliders, Search, Check, Copy, Pencil, ChevronDown, ChevronRight, LayoutGrid, SlidersHorizontal, FolderInput, LoaderCircle, Gauge, LogOut, CircleHelp, ArrowLeft, List, Plug, Wifi, Cpu, Layers, Power, Info, ArrowUpDown, Cloud, MoreHorizontal } from 'lucide-react';
+import { Shield, Activity, Server, GitFork, BookOpen, Terminal, Settings, Menu, Sun, Moon, Monitor, Minus, Square, X, Play, Pause, RefreshCw, Plus, Trash2, Zap, Globe, ArrowUpRight, ArrowDownLeft, CheckCircle2, Sliders, Search, Check, Copy, Pencil, ChevronDown, ChevronRight, LayoutGrid, SlidersHorizontal, FolderInput, LoaderCircle, Gauge, LogOut, CircleHelp, ArrowLeft, List, Plug, Wifi, Cpu, Layers, Power, Info, ArrowUpDown, Cloud, MoreHorizontal, Languages } from 'lucide-react';
 
 import {
   GetNodes,
@@ -130,12 +131,31 @@ export default function App() {
   };
 
   // 节点延迟的展示文字与配色（简易模式节点下拉用）
-  const delayText = d => d > 0 ? `${d}ms` : d === -2 ? '超时' : '未测';
+  const delayText = d => d > 0 ? `${d}ms` : d === -2 ? tr('超时') : tr('未测');
   const delayColor = d => d > 0
     ? (d < 300 ? '#3fbf6f' : d < 800 ? '#e5a50a' : '#ff6b6b')
     : d === -2 ? '#ff6b6b' : 'var(--text-tertiary)';
 
   // 主题偏好：system=跟随系统（默认）/ light / dark；theme 为实际生效的主题（只有 light / dark）
+  // 界面语言：langPref = system（默认，跟随系统 navigator.language）/ zh-CN / en；
+  // 持久化在 Go 端 settings.language，localStorage 做启动缓存（避免首帧闪一下另一种语言）
+  const [langPref, setLangPref] = useState(loadCachedLangPref);
+  const [sysLang, setSysLang] = useState(detectSystemLang);
+  const lang = langPref === 'system' ? sysLang : langPref;
+  setCurrentLang(lang);
+  useEffect(() => {
+    const onLang = () => setSysLang(detectSystemLang());
+    window.addEventListener('languagechange', onLang);
+    return () => window.removeEventListener('languagechange', onLang);
+  }, []);
+  useEffect(() => {
+    try { document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN'; } catch (_) { /* 忽略 */ }
+    // 通知 Go 端当前生效语言（托盘菜单、原生对话框跟随）；旧后端没有该绑定时忽略
+    try {
+      const fn = window.go && window.go.main && window.go.main.App && window.go.main.App.SetUILanguage;
+      if (typeof fn === 'function') Promise.resolve(fn(lang)).catch(() => {});
+    } catch (_) { /* 忽略 */ }
+  }, [lang]);
   const [themePref, setThemePref] = useState('system');
   const [systemDark, setSystemDark] = useState(() => {
     try { return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches); }
@@ -199,7 +219,7 @@ export default function App() {
     downSpeed: '0 B/s',
     totalUp: '0 GB',
     totalDown: '0 GB',
-    activeNodeName: '未选择节点',
+    activeNodeName: tr('未选择节点'),
     activeNodeProto: 'VLESS'
   });
 
@@ -308,7 +328,7 @@ export default function App() {
   const renderToasts = () => (
     <div className="toast-container">
       {toasts.map(t => (
-        <div key={t.id} className={`toast toast-${t.type}`}>{t.msg}</div>
+        <div key={t.id} className={`toast toast-${t.type}`}>{trMsg(t.msg)}</div>
       ))}
     </div>
   );
@@ -371,17 +391,17 @@ export default function App() {
   // 内核状态（仪表盘状态条）
   const coreState = status.coreState || (status.running ? 'running' : 'stopped');
   const coreStateLabel = {
-    running: status.coreDirectOnly ? '内核运行中 · 直连（未选节点）' : '内核运行中',
-    fallback: '内核运行中 · 节点不可用，临时直连',
-    stopped: '内核已停止',
-    retrying: '内核启动失败 · 自动重试中…',
-    failed: '内核启动失败' + (status.corePortError ? '：端口被占用' : ''),
-  }[coreState] || '内核已停止';
+    running: status.coreDirectOnly ? tr('内核运行中 · 直连（未选节点）') : tr('内核运行中'),
+    fallback: tr('内核运行中 · 节点不可用，临时直连'),
+    stopped: tr('内核已停止'),
+    retrying: tr('内核启动失败 · 自动重试中…'),
+    failed: tr('内核启动失败') + (status.corePortError ? tr('：端口被占用') : ''),
+  }[coreState] || tr('内核已停止');
 
   // 关闭按钮的语义取决于「关闭窗口时最小化到托盘」开关
   const closeWindowTitle = settings.minimizeToTray
-    ? '关闭（最小化到系统托盘）'
-    : '关闭并退出程序';
+    ? tr('关闭（最小化到系统托盘）')
+    : tr('关闭并退出程序');
 
   const refreshAllData = async () => {
     try {
@@ -399,6 +419,11 @@ export default function App() {
       if (curLogs) setLogs(curLogs);
       if (curAccount) setAccount(curAccount);
       if (curSettings) {
+        {
+          const lp = normalizeLangPref(curSettings.language);
+          setLangPref(lp);
+          cacheLangPref(lp);
+        }
         setLocalSettings(curSettings);
         setPrefsBaseline(prefSig(curSettings));
         // 已保存的 light / dark 保持不变；system、空值或未知值都按跟随系统处理
@@ -433,6 +458,18 @@ export default function App() {
 
   // Actions
 
+  const handleLanguageSelect = async (next) => {
+    const p = normalizeLangPref(next);
+    setLangPref(p);
+    cacheLangPref(p);
+    setLocalSettings(prev => ({ ...prev, language: p }));
+    try {
+      await SaveSettings({ ...settings, language: p });
+    } catch (e) {
+      // 保存失败不影响本次显示；localStorage 里已有缓存
+    }
+  };
+
   const handleThemeSelect = async (next) => {
     setThemeMenuOpen(false);
     if (next === themePref) return;
@@ -447,16 +484,16 @@ export default function App() {
 
   // 标题栏主题按钮 + 下拉菜单（浅色 / 深色 / 跟随系统），简易模式和普通模式共用
   const THEME_OPTIONS = [
-    { key: 'light', label: '浅色', Icon: Sun },
-    { key: 'dark', label: '深色', Icon: Moon },
-    { key: 'system', label: '跟随系统', Icon: Monitor },
+    { key: 'light', label: tr('浅色'), Icon: Sun },
+    { key: 'dark', label: tr('深色'), Icon: Moon },
+    { key: 'system', label: tr('跟随系统'), Icon: Monitor },
   ];
   const renderThemeMenu = () => {
     const cur = THEME_OPTIONS.find(o => o.key === themePref) || THEME_OPTIONS[2];
     const CurIcon = cur.Icon;
     const title = themePref === 'system'
-      ? `主题：跟随系统（当前${theme === 'dark' ? '深色' : '浅色'}）`
-      : `主题：${cur.label}`;
+      ? tr('主题：跟随系统（当前{cur}）', { cur: theme === 'dark' ? tr('深色') : tr('浅色') })
+      : tr('主题：{name}', { name: cur.label });
     return (
       <div className="theme-menu-wrap" ref={themeMenuRef}>
         <button
@@ -559,11 +596,11 @@ export default function App() {
         await SaveSettings({ ...s, uiMode: 'simple' });
         setLocalSettings(prev => ({ ...prev, uiMode: 'simple' }));
       } catch (e) { /* ignore */ }
-      showToast('网页登录成功，订阅已同步', 'success');
+      showToast(tr('网页登录成功，订阅已同步'), 'success');
     });
     const offErr = EventsOn('kncloud:web-login-error', (msg) => {
       setWebLoginWaiting(false);
-      showToast(String(msg || '网页登录失败'), 'error');
+      showToast(trMsg(String(msg || '')) || tr('网页登录失败'), 'error');
     });
     return () => {
       if (typeof offOk === 'function') offOk();
@@ -599,9 +636,9 @@ export default function App() {
       await SyncNodes();
       setSubscriptions(await GetSubscriptions());
       setNodes(await GetNodes());
-      showToast('订阅及节点已更新', 'success');
+      showToast(tr('订阅及节点已更新'), 'success');
     } catch (e) {
-      showToast('更新失败：' + (e?.message || e), 'error');
+      showToast(tr('更新失败：') + (e?.message || e), 'error');
     } finally {
       setSyncing(false);
     }
@@ -613,12 +650,12 @@ export default function App() {
     try {
       await SelectNode(id);
       if (target && status.tunnelMode) {
-        showToast(`已切换至「${target.name}」，已断开旧连接，请刷新页面查看新 IP`, 'success');
+        showToast(tr('已切换至「{name}」，已断开旧连接，请刷新页面查看新 IP', { name: target.name }), 'success');
       }
     } catch (e) {
       const msg = String(e?.message || e);
       if (msg.includes('superseded')) return; // 被更新的点击取代，由那次请求刷新界面
-      showToast('切换节点失败：' + msg, 'error');
+      showToast(tr('切换节点失败：') + msg, 'error');
     }
     setNodes(await GetNodes());
     setStatus(await GetCoreStatus());
@@ -666,7 +703,7 @@ export default function App() {
     setPendingMode(mode);
     const enteringTun = mode === 'tun';
     const leavingTun = status.tunnelMode && !enteringTun;
-    if (enteringTun || leavingTun) showToast(enteringTun ? '正在启动 TUN…' : '正在关闭 TUN…', 'info');
+    if (enteringTun || leavingTun) showToast(enteringTun ? tr('正在启动 TUN…') : tr('正在关闭 TUN…'), 'info');
     let ok = false;
     try {
       if (enteringTun) await SimpleConnect(true);
@@ -674,12 +711,12 @@ export default function App() {
       ok = true;
     } catch (e) {
       const msg = String(e?.message || e).replace(/^.*?: /, '');
-      showToast(enteringTun ? msg : '切换模式失败：' + msg, 'error');
+      showToast(enteringTun ? msg : tr('切换模式失败：') + msg, 'error');
     } finally {
       try {
         const s = await GetCoreStatus();
         setStatus(s);
-        if (ok && (enteringTun || leavingTun)) showToast(s.tunnelMode ? 'TUN 已开启' : 'TUN 已关闭', 'success');
+        if (ok && (enteringTun || leavingTun)) showToast(s.tunnelMode ? tr('TUN 已开启') : tr('TUN 已关闭'), 'success');
       } catch (_) {}
       setPendingMode(null);
       modeBusyRef.current = false;
@@ -695,11 +732,11 @@ export default function App() {
     const target = nodes.find(n => n.id === id);
     if (!target) return;
     if (switchingNodeId === id) {
-      showToast(`正在切换至「${target.name}」…`, 'info');
+      showToast(tr('正在切换至「{name}」…', { name: target.name }), 'info');
       return;
     }
     if (!switchingNodeId && target.active) {
-      showToast(`当前已连接至「${target.name}」`, 'info');
+      showToast(tr('当前已连接至「{name}」', { name: target.name }), 'info');
       return;
     }
 
@@ -718,7 +755,7 @@ export default function App() {
       await Promise.race([
         SelectNode(id),
         new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error('切换超时，请稍后重试')), 20000);
+          timer = setTimeout(() => reject(new Error(tr('切换超时，请稍后重试'))), 20000);
         })
       ]);
       if (seq !== switchSeqRef.current) return; // 已被更新的点击取代
@@ -726,15 +763,15 @@ export default function App() {
       // 会让出口 IP 看起来没变），提醒用户刷新页面而不是以为切换失败。
       showToast(
         status.tunnelMode
-          ? `已切换至「${target.name}」，已断开旧连接，请刷新页面查看新 IP`
-          : `已切换至「${target.name}」`,
+          ? tr('已切换至「{name}」，已断开旧连接，请刷新页面查看新 IP', { name: target.name })
+          : tr('已切换至「{name}」', { name: target.name }),
         'success'
       );
     } catch (e) {
       if (seq !== switchSeqRef.current) return;
       const msg = String(e?.message || e);
       if (msg.includes('superseded')) return;
-      showToast('切换节点失败：' + msg, 'error');
+      showToast(tr('切换节点失败：') + msg, 'error');
     } finally {
       clearTimeout(timer);
       if (seq === switchSeqRef.current) {
@@ -770,13 +807,13 @@ export default function App() {
     if (selectedNodeIds.length > 1) {
       pingingActiveRef.current = true;
       setIsPingingAll(true);
-      showToast(`正在对选中的 ${selectedNodeIds.length} 个节点进行真连接测速…`, "info");
+      showToast(tr('正在对选中的 {n} 个节点进行真连接测速…', { n: selectedNodeIds.length }), "info");
       try {
         const res = await PingNodes(selectedNodeIds);
         setNodes(res);
-        showToast(`已完成 ${selectedNodeIds.length} 个节点的批量测速`, "success");
+        showToast(tr('已完成 {n} 个节点的批量测速', { n: selectedNodeIds.length }), "success");
       } catch (err) {
-        showToast("批量测速失败：" + (err?.message || err), "error");
+        showToast(tr("批量测速失败：") + (err?.message || err), "error");
       } finally {
         setIsPingingAll(false);
         pingingActiveRef.current = false;
@@ -792,24 +829,24 @@ export default function App() {
       targetNode = nodes.find(n => n.active);
     }
     if (!targetNode) {
-      showToast("未选择节点，无法测速", "error");
+      showToast(tr("未选择节点，无法测速"), "error");
       return;
     }
 
     pingingActiveRef.current = true;
-    showToast(`正在真连接测速「${targetNode.name}」…`);
+    showToast(tr('正在真连接测速「{name}」…', { name: targetNode.name }));
     try {
       await PingNode(targetNode.id);
       const updated = await GetNodes();
       setNodes(updated);
       const n = updated.find(x => x.id === targetNode.id);
       if (n && n.delay > 0) {
-        showToast(`「${n.name}」测速完成：${n.delay} ms`, "success");
+        showToast(tr('「{name}」测速完成：{ms} ms', { name: n.name, ms: n.delay }), "success");
       } else {
-        showToast(`「${targetNode.name}」测速超时或失败`, "error");
+        showToast(tr('「{name}」测速超时或失败', { name: targetNode.name }), "error");
       }
     } catch (e) {
-      showToast("测速失败：" + (e?.message || e), "error");
+      showToast(tr("测速失败：") + (e?.message || e), "error");
     } finally {
       pingingActiveRef.current = false;
     }
@@ -872,7 +909,7 @@ export default function App() {
             e.preventDefault();
             const allIds = filteredNodes.map(n => n.id);
             setSelectedNodeIds(allIds);
-            showToast(`已全选 ${allIds.length} 个节点（按 Ctrl+R 批量测速）`, "info");
+            showToast(tr('已全选 {n} 个节点（按 Ctrl+R 批量测速）', { n: allIds.length }), "info");
             return;
           }
         }
@@ -888,24 +925,24 @@ export default function App() {
       if (key === "c") {
         const cur = nodes.find(n => n.active);
         if (!cur) {
-          showToast("未选择节点，无法复制", "error");
+          showToast(tr("未选择节点，无法复制"), "error");
           return;
         }
         try {
           await CopyNodeShareLink(cur.id);
-          showToast(`已复制「${cur.name}」的分享链接到剪贴板`, "success");
+          showToast(tr('已复制「{name}」的分享链接到剪贴板', { name: cur.name }), "success");
         } catch (err) {
-          showToast("复制失败：" + (err?.message || err), "error");
+          showToast(tr("复制失败：") + (err?.message || err), "error");
         }
       } else {
         try {
           const count = await ImportNodesFromClipboard();
           if (count > 0) {
             setNodes(await GetNodes());
-            showToast(`已从剪贴板导入 ${count} 个节点`, "success");
+            showToast(tr('已从剪贴板导入 {n} 个节点', { n: count }), "success");
           }
         } catch (err) {
-          showToast("导入失败：" + (err?.message || err), "error");
+          showToast(tr("导入失败：") + (err?.message || err), "error");
         }
       }
     };
@@ -920,7 +957,7 @@ export default function App() {
       const res = await PingAllNodes();
       if (res) setNodes(res);
     } catch (err) {
-      showToast('测速失败：' + (err?.message || err), 'error');
+      showToast(tr('测速失败：') + (err?.message || err), 'error');
     } finally {
       setIsPingingAll(false);
     }
@@ -941,9 +978,9 @@ export default function App() {
       await DeleteNodes(ids);
       setNodes(await GetNodes());
       setSelectedNodeIds([]);
-      showToast(`已删除 ${ids.length} 个节点`, "success");
+      showToast(tr('已删除 {n} 个节点', { n: ids.length }), "success");
     } catch (err) {
-      showToast("删除失败：" + (err?.message || err), "error");
+      showToast(tr("删除失败：") + (err?.message || err), "error");
     }
   };
 
@@ -1062,7 +1099,7 @@ export default function App() {
         await AddNode({ ...newNode, port: parseInt(newNode.port, 10) || 443 });
       }
     } catch (e) {
-      showToast('保存节点失败：' + (e?.message || e), 'error');
+      showToast(tr('保存节点失败：') + (e?.message || e), 'error');
     }
     setShowAddNodeModal(false);
     resetNodeForm();
@@ -1080,9 +1117,9 @@ export default function App() {
       setImportText('');
       setNodes(await GetNodes());
       setActiveTab('servers');
-      showToast('成功导入 ' + count + ' 个节点！', 'success');
+      showToast(tr('成功导入 {n} 个节点！', { n: count }), 'success');
     } catch (e) {
-      showToast('导入失败：' + (e?.message || e), 'error');
+      showToast(tr('导入失败：') + (e?.message || e), 'error');
     }
   };
 
@@ -1098,7 +1135,7 @@ export default function App() {
       if (!p) return;
       if (p.stage === 'error') {
         // 下载 / 校验 / 安装失败：错误走 Toast，进度区复位
-        showToast(p.message || '更新失败', 'error');
+        showToast(trMsg(p.message) || tr('更新失败'), 'error');
         setUpdProgress({ stage: 'idle', percent: 0, message: '' });
         return;
       }
@@ -1119,12 +1156,12 @@ export default function App() {
       } else {
         // 已是最新 / 开发版 / 缺安装包：一次性结果走 Toast
         setUpdInfo(null);
-        const latest = info?.latestVersion && info.message === '已是最新版本' ? `（${info.latestVersion}）` : '';
-        showToast((info?.message || '已是最新版本') + latest, info?.message === '已是最新版本' ? 'success' : 'info');
+        const latest = info?.latestVersion && info.message === '已是最新版本' ? tr('（{v}）', { v: info.latestVersion }) : '';
+        showToast(trMsg(info?.message || '已是最新版本') + latest, info?.message === '已是最新版本' ? 'success' : 'info');
       }
     } catch (e) {
       setUpdInfo(null);
-      showToast('检查更新失败：' + String(e?.message || e), 'error');
+      showToast(tr('检查更新失败：') + String(e?.message || e), 'error');
     } finally {
       setUpdChecking(false);
     }
@@ -1132,11 +1169,11 @@ export default function App() {
   const handleStartUpdate = async () => {
     if (updBusy) return;
     try {
-      setUpdProgress({ stage: 'downloading', percent: 0, message: '准备下载…' });
+      setUpdProgress({ stage: 'downloading', percent: 0, message: tr('准备下载…') });
       await StartUpdate();
     } catch (e) {
       setUpdProgress({ stage: 'idle', percent: 0, message: '' });
-      showToast('更新失败：' + String(e?.message || e), 'error');
+      showToast(tr('更新失败：') + String(e?.message || e), 'error');
     }
   };
 
@@ -1157,10 +1194,10 @@ export default function App() {
     setPrefsBaseline(prefSig(saved || settings));
     if (asErr && saved && !!saved.autoStart !== wantAutoStart) {
       // 后端已把开机自启回滚到原状态，其余首选项照常保存
-      showToast((wantAutoStart ? '开启' : '关闭') + '开机自启失败：' + asErr, 'error');
+      showToast(tr(wantAutoStart ? '开启开机自启失败：' : '关闭开机自启失败：') + trMsg(asErr), 'error');
       return;
     }
-    showToast('首选项已成功保存！', 'success');
+    showToast(tr('首选项已成功保存！'), 'success');
   };
 
   // Filtered nodes
@@ -1205,7 +1242,7 @@ export default function App() {
     return ordered;
   })();
   const tileDelayClass = (d) => d > 0 ? (d < 300 ? 'qp-delay-good' : d < 800 ? 'qp-delay-medium' : 'qp-delay-bad') : d === -2 ? 'qp-delay-bad' : 'qp-delay-none';
-  const tileDelayText = (d) => d > 0 ? `${d} ms` : d === -2 ? '超时' : '未测';
+  const tileDelayText = (d) => d > 0 ? `${d} ms` : d === -2 ? tr('超时') : tr('未测');
   // 节点卡片：从名称拆出地区代码与 IPv6 标记（Windows 不渲染国旗 emoji，用地区代码徽标代替）
   const REGION_CODES = [
     ['香港', 'HK'], ['台湾', 'TW'], ['澳门', 'MO'], ['日本', 'JP'], ['韩国', 'KR'], ['新加坡', 'SG'],
@@ -1231,12 +1268,12 @@ export default function App() {
   const shownMode = pendingMode || actualMode;
   const modeIndex = Math.max(0, MODE_ORDER.indexOf(shownMode));
   const MODE_INFO = {
-    'bypass-cn': { title: '绕过大陆', desc: '系统代理 · 国内网站直连，其余经节点转发' },
-    global: { title: '全局代理', desc: '系统代理 · 全部流量经节点转发（局域网除外）' },
-    direct: { title: '全局直连', desc: '系统代理 · 全部直连，不经过节点' },
-    tun: { title: 'TUN 全局接管', desc: '虚拟网卡接管整机流量，全部经节点转发（局域网除外）' },
+    'bypass-cn': { title: tr('绕过大陆'), desc: tr('系统代理 · 国内网站直连，其余经节点转发') },
+    global: { title: tr('全局代理'), desc: tr('系统代理 · 全部流量经节点转发（局域网除外）') },
+    direct: { title: tr('全局直连'), desc: tr('系统代理 · 全部直连，不经过节点') },
+    tun: { title: tr('TUN 全局接管'), desc: tr('虚拟网卡接管整机流量，全部经节点转发（局域网除外）') },
   };
-  const heroInfo = MODE_INFO[actualMode] || { title: '自定义规则', desc: '系统代理 · 按 SSTap 规则文件分流' };
+  const heroInfo = MODE_INFO[actualMode] || { title: tr('自定义规则'), desc: tr('系统代理 · 按 SSTap 规则文件分流') };
 
   // 登录页与简洁模式同尺寸（420x640）；登录成功后由模式切换逻辑控制窗口
   useEffect(() => {
@@ -1252,13 +1289,13 @@ export default function App() {
             <img src={brandLogo} alt="KNcloud" style={{ height: "22px", width: "auto", display: "block" }} />
           </div>
           <div className="titlebar-right no-drag">
-            <button className="win-caption-btn" onClick={() => WindowMin()} title="最小化"><Minus size={13} /></button>
-            <button className="win-caption-btn btn-close" onClick={() => WindowClose()} title="关闭"><X size={14} /></button>
+            <button className="win-caption-btn" onClick={() => WindowMin()} title={tr('最小化')}><Minus size={13} /></button>
+            <button className="win-caption-btn btn-close" onClick={() => WindowClose()} title={tr('关闭')}><X size={14} /></button>
           </div>
         </header>
         <div className="boot-body">
           <LoaderCircle size={28} className="spin" />
-          <span>正在启动…</span>
+          <span>{tr('正在启动…')}</span>
         </div>
       </div>
     );
@@ -1271,9 +1308,9 @@ export default function App() {
         <header className="titlebar drag-region">
           <div className="titlebar-left" />
           <div className="titlebar-right no-drag">
-            <button className="win-caption-btn" onClick={() => WindowMin()} title="最小化"><Minus size={13} /></button>
-            <button className="win-caption-btn" onClick={() => WindowMax()} title="最大化"><Square size={11} /></button>
-            <button className="win-caption-btn btn-close" onClick={() => WindowClose()} title="关闭"><X size={14} /></button>
+            <button className="win-caption-btn" onClick={() => WindowMin()} title={tr('最小化')}><Minus size={13} /></button>
+            <button className="win-caption-btn" onClick={() => WindowMax()} title={tr('最大化')}><Square size={11} /></button>
+            <button className="win-caption-btn btn-close" onClick={() => WindowClose()} title={tr('关闭')}><X size={14} /></button>
           </div>
         </header>
         {renderToasts()}
@@ -1282,26 +1319,26 @@ export default function App() {
           <input
             type="email"
             className="win11-input login-input"
-            placeholder="邮箱地址"
+            placeholder={tr('邮箱地址')}
             value={loginForm.email}
             onChange={e => setLoginForm({ ...loginForm, email: e.target.value })}
           />
           <input
             type="password"
             className="win11-input login-input"
-            placeholder="密码"
+            placeholder={tr('密码')}
             value={loginForm.password}
             onChange={e => setLoginForm({ ...loginForm, password: e.target.value })}
             onKeyDown={e => { if (e.key === 'Enter') handleLogin(); }}
           />
-          {loginErr && <div className="login-err">{loginErr}</div>}
+          {loginErr && <div className="login-err">{trMsg(loginErr)}</div>}
           <button className="win11-btn primary login-btn" disabled={loginBusy || webLoginWaiting} onClick={handleLogin}>
-            {loginBusy ? '登录中…' : '登 录'}
+            {loginBusy ? tr('登录中…') : tr('登 录')}
           </button>
-          <div className="login-divider"><span>或</span></div>
+          <div className="login-divider"><span>{tr('或')}</span></div>
           <button className="win11-btn login-btn" disabled={loginBusy || webLoginWaiting} onClick={handleWebLogin}>
             <Globe size={14} />
-            <span>{webLoginWaiting ? '等待网页授权…' : '通过网站登录'}</span>
+            <span>{webLoginWaiting ? tr('等待网页授权…') : tr('通过网站登录')}</span>
           </button>
         </div>
       </div>
@@ -1349,14 +1386,14 @@ export default function App() {
             <img src={brandLogo} alt="KNcloud-WIN" style={{ height: "22px", width: "auto", display: "block" }} />
           </div>
           <div className="titlebar-right no-drag">
-            <button className="theme-toggle-btn" onClick={handleUiModeToggle} title="切换到普通模式（完整设置）">
+            <button className="theme-toggle-btn" onClick={handleUiModeToggle} title={tr('切换到普通模式（完整设置）')}>
               <SlidersHorizontal size={15} />
             </button>
             {renderThemeMenu()}
-            <button className="win-caption-btn" onClick={() => WindowMin()} title="最小化">
+            <button className="win-caption-btn" onClick={() => WindowMin()} title={tr('最小化')}>
               <Minus size={13} />
             </button>
-            <button className="win-caption-btn" onClick={() => WindowMax()} title="最大化">
+            <button className="win-caption-btn" onClick={() => WindowMax()} title={tr('最大化')}>
               <Square size={11} />
             </button>
             <button className="win-caption-btn btn-close" onClick={() => WindowClose()} title={closeWindowTitle}>
@@ -1380,11 +1417,11 @@ export default function App() {
                   <div className="simple-avatar">{(account.email || 'K').slice(0, 1).toUpperCase()}</div>
                   <div className="simple-account-id">
                     <div className="simple-account-email">{account.email}</div>
-                    <div className="simple-account-expire">{account.expire}</div>
+                    <div className="simple-account-expire">{trMsg(account.expire)}</div>
                   </div>
-                  <span className="simple-plan-badge">{account.planName || 'KNcloud 套餐'}</span>
+                  <span className="simple-plan-badge">{account.planName || tr('KNcloud 套餐')}</span>
                   <div className="sb-acct-more">
-                    <button type="button" className={`sb-icon-btn ${acctMenuOpen ? 'on' : ''}`} onClick={() => setAcctMenuOpen(v => !v)} title="更多" aria-label="更多">
+                    <button type="button" className={`sb-icon-btn ${acctMenuOpen ? 'on' : ''}`} onClick={() => setAcctMenuOpen(v => !v)} title={tr('更多')} aria-label={tr('更多')}>
                       <MoreHorizontal size={16} />
                     </button>
                     {acctMenuOpen && (
@@ -1392,10 +1429,10 @@ export default function App() {
                         <div className="sb-menu-mask" onClick={() => setAcctMenuOpen(false)} />
                         <div className="sb-acct-menu" role="menu">
                           <button type="button" role="menuitem" disabled={syncing} onClick={() => { setAcctMenuOpen(false); handleUpdateSubscription(); }}>
-                            <RefreshCw size={13} className={syncing ? 'spin' : ''} /><span>{syncing ? '更新中…' : '更新订阅'}</span>
+                            <RefreshCw size={13} className={syncing ? 'spin' : ''} /><span>{syncing ? tr('更新中…') : tr('更新订阅')}</span>
                           </button>
                           <button type="button" role="menuitem" className="danger" onClick={() => { setAcctMenuOpen(false); handleLogout(); }}>
-                            <LogOut size={13} /><span>退出登录</span>
+                            <LogOut size={13} /><span>{tr('退出登录')}</span>
                           </button>
                         </div>
                       </>
@@ -1404,8 +1441,8 @@ export default function App() {
                   </div>
                   <div className="sb-usage">
                     <div className="sb-usage-row">
-                      <span>已用 <b>{fmtGB(used)}</b></span>
-                      <span>{limited ? `${pct < 10 ? pct.toFixed(1) : Math.round(pct)}% · 共 ${fmtGB(total)}` : '不限流量'}</span>
+                      <span>{tr('已用')} <b>{fmtGB(used)}</b></span>
+                      <span>{limited ? tr('{pct}% · 共 {total}', { pct: pct < 10 ? pct.toFixed(1) : Math.round(pct), total: fmtGB(total) }) : tr('不限流量')}</span>
                     </div>
                     {limited && <div className="simple-account-bar"><div style={{ width: `${pct}%` }} /></div>}
                   </div>
@@ -1415,21 +1452,21 @@ export default function App() {
           })()}
 
           {/* 连接卡（紧凑）：盾牌图标 + 状态 + 一行上下行速度/节点/延迟，右侧开关 */}
-          <div className="sb-card sb-status sb-compact" title={simpleOn ? (status.tunnelMode ? '模式：TUN 全局' : routing === 'bypass-cn' ? '模式：绕过大陆' : '模式：全局代理') : undefined}>
+          <div className="sb-card sb-status sb-compact" title={simpleOn ? (status.tunnelMode ? tr('模式：TUN 全局') : routing === 'bypass-cn' ? tr('模式：绕过大陆') : tr('模式：全局代理')) : undefined}>
             <div className="sb-shield"><Cloud size={21} strokeWidth={2.1} /></div>
             <div className="sb-status-info">
               <div className={`simple-status-text sb-status-title ${simpleState === 'checking' ? 'checking' : ''}`}>
                 {simpleState === 'off'
-                  ? '未连接'
+                  ? tr('未连接')
                   : simpleState === 'checking'
-                    ? '正在连接…'
+                    ? tr('正在连接…')
                     : simpleState === 'fail'
-                      ? '连接失败'
+                      ? tr('连接失败')
                       : simpleState === 'none'
-                        ? '未选择节点'
-                        : '已连接'}
+                        ? tr('未选择节点')
+                        : tr('已连接')}
               </div>
-              <div className="sb-compact-sub" title="上下行仅统计经代理节点的流量">
+              <div className="sb-compact-sub" title={tr('上下行仅统计经代理节点的流量')}>
                 {simpleState === 'ok' ? (
                   <>
                     <span className="sb-sp">↑ {status.upSpeed || '0 B/s'}</span>
@@ -1440,11 +1477,11 @@ export default function App() {
                 ) : (
                   <span className="sb-compact-node">
                     {simpleState === 'off'
-                      ? `打开右侧开关开始连接${activeNode ? ' · ' + activeNode.name : ''}`
+                      ? tr('打开右侧开关开始连接') + (activeNode ? ' · ' + activeNode.name : '')
                       : simpleState === 'fail'
-                        ? '请更换节点后重试'
+                        ? tr('请更换节点后重试')
                         : simpleState === 'none'
-                          ? '请在下方选择节点'
+                          ? tr('请在下方选择节点')
                           : (activeNode ? activeNode.name : '')}
                   </span>
                 )}
@@ -1454,10 +1491,10 @@ export default function App() {
               type="button"
               role="switch"
               aria-checked={simpleOn}
-              aria-label="连接开关"
+              aria-label={tr('连接开关')}
               className={['sb-switch', (simpleOn || simpleState === 'checking') ? 'on' : '', simpleState === 'checking' ? 'busy' : ''].filter(Boolean).join(' ')}
               onClick={handleSimpleConnect}
-              title={simpleOn ? '点击断开连接' : '点击开启全局代理'}
+              title={simpleOn ? tr('点击断开连接') : tr('点击开启全局代理')}
             >
               <span className="sb-switch-thumb" />
             </button>
@@ -1466,7 +1503,7 @@ export default function App() {
           {/* 节点卡：固定单行，点击打开节点下拉（菜单以本容器为定位基准计算上下空间） */}
           <div className="sb-nodes">
             <div className="sb-card sb-node-list">
-              {nodes.length === 0 && <div className="sb-node-list-empty">暂无节点，请在普通模式中添加</div>}
+              {nodes.length === 0 && <div className="sb-node-list-empty">{tr('暂无节点，请在普通模式中添加')}</div>}
               {nodes.map(n => (
                 <button
                   type="button"
@@ -1488,19 +1525,19 @@ export default function App() {
 
   // 实时上传/下载（只统计走节点的流量），并入订阅卡右侧
   const speedStats = (
-    <div className="speed-stats" title="仅统计经代理节点的流量">
+    <div className="speed-stats" title={tr('仅统计经代理节点的流量')}>
       <div className="speed-stat up">
         <ArrowUpRight size={14} />
         <div>
           <div className="speed-val">{status.upSpeed}</div>
-          <div className="speed-total">本地累计 {status.totalUp}</div>
+          <div className="speed-total">{tr('本地累计')} {status.totalUp}</div>
         </div>
       </div>
       <div className="speed-stat down">
         <ArrowDownLeft size={14} />
         <div>
           <div className="speed-val">{status.downSpeed}</div>
-          <div className="speed-total">本地累计 {status.totalDown}</div>
+          <div className="speed-total">{tr('本地累计')} {status.totalDown}</div>
         </div>
       </div>
     </div>
@@ -1520,10 +1557,10 @@ export default function App() {
                       style={{ transform: `translateX(calc(${modeIndex} * (100% + 4px)))` }}
                     />
                     {[
-                      { id: 'bypass-cn', label: '绕过大陆' },
-                      { id: 'global', label: '全局代理' },
-                      { id: 'direct', label: '全局直连' },
-                      { id: 'tun', label: 'TUN 模式', title: '虚拟网卡全局接管整机流量（需管理员权限）' },
+                      { id: 'bypass-cn', label: tr('绕过大陆') },
+                      { id: 'global', label: tr('全局代理') },
+                      { id: 'direct', label: tr('全局直连') },
+                      { id: 'tun', label: tr('TUN 模式'), title: tr('虚拟网卡全局接管整机流量（需管理员权限）') },
                     ].map(m => (
                       <button
                         key={m.id}
@@ -1566,8 +1603,8 @@ export default function App() {
     </label>
   );
   const settingsTabs = [
-    { id: 'settings', label: '常规设置' },
-    { id: 'logs', label: '实时日志' },
+    { id: 'settings', label: tr('常规设置') },
+    { id: 'logs', label: tr('实时日志') },
   ];
 
   return (
@@ -1581,21 +1618,21 @@ export default function App() {
 
 
         <div className="titlebar-right no-drag">
-          <button className="theme-toggle-btn" onClick={handleUiModeToggle} title="切换到简易模式（点击即用）">
+          <button className="theme-toggle-btn" onClick={handleUiModeToggle} title={tr('切换到简易模式（点击即用）')}>
             <LayoutGrid size={15} />
           </button>
           <button
             className={`theme-toggle-btn ${inSettings ? 'open' : ''}`}
             onClick={() => setActiveTab(inSettings ? 'dashboard' : 'settings')}
-            title={inSettings ? '返回仪表盘' : '首选项设置'}
+            title={inSettings ? tr('返回仪表盘') : tr('首选项设置')}
           >
             <Settings size={15} />
           </button>
           {renderThemeMenu()}
-          <button className="win-caption-btn" onClick={() => WindowMin()} title="最小化">
+          <button className="win-caption-btn" onClick={() => WindowMin()} title={tr('最小化')}>
             <Minus size={13} />
           </button>
-          <button className="win-caption-btn" onClick={() => WindowMax()} title="最大化">
+          <button className="win-caption-btn" onClick={() => WindowMax()} title={tr('最大化')}>
             <Square size={11} />
           </button>
           <button className="win-caption-btn btn-close" onClick={() => WindowClose()} title={closeWindowTitle}>
@@ -1612,7 +1649,7 @@ export default function App() {
           {/* 设置页顶栏（吸顶，不随内容滚走）：返回 / 子导航 / 当前页操作 */}
           {inSettings && (
             <div className={`settings-topbar ${settingsScrolled ? 'scrolled' : ''}`}>
-              <button className="settings-back" onClick={() => setActiveTab('dashboard')} title="返回仪表盘">
+              <button className="settings-back" onClick={() => setActiveTab('dashboard')} title={tr('返回仪表盘')}>
                 <ArrowLeft size={16} />
               </button>
               <div className="segmented-control settings-tabs" role="tablist">
@@ -1633,11 +1670,11 @@ export default function App() {
                 {activeTab === 'settings' && (
                   <>
                     {prefsDirty && (
-                      <span className="settings-dirty"><span className="settings-dirty-dot" />有未保存的更改</span>
+                      <span className="settings-dirty"><span className="settings-dirty-dot" />{tr('有未保存的更改')}</span>
                     )}
                     <button className={`win11-btn ${prefsDirty ? 'primary' : ''}`} onClick={handleSaveSettings}>
                       <Check size={14} />
-                      <span>保存设置</span>
+                      <span>{tr('保存设置')}</span>
                     </button>
                   </>
                 )}
@@ -1645,11 +1682,11 @@ export default function App() {
                   <>
                     <button className="win11-btn" onClick={() => ClearLogs()}>
                       <Trash2 size={13} />
-                      <span>清空日志</span>
+                      <span>{tr('清空日志')}</span>
                     </button>
                     <button className="win11-btn primary" onClick={() => refreshAllData()}>
                       <RefreshCw size={13} />
-                      <span>刷新</span>
+                      <span>{tr('刷新')}</span>
                     </button>
                   </>
                 )}
@@ -1665,7 +1702,7 @@ export default function App() {
                 </div>
                 <div className={`core-status core-${coreState}`}>
                   <span className="core-dot" aria-hidden="true" />
-                  <span className="core-label" title={status.coreError || ''}>{coreStateLabel}</span>
+                  <span className="core-label" title={trMsg(status.coreError || '')}>{coreStateLabel}</span>
                 </div>
               </div>
 
@@ -1673,14 +1710,14 @@ export default function App() {
                 <div className="win11-card core-error-card" role="alert">
                   <div className="core-error-title">
                     {coreState === 'fallback'
-                      ? '当前节点无法启动内核，内核已临时以直连运行'
-                      : '内核启动失败，正在自动重试…'}
+                      ? tr('当前节点无法启动内核，内核已临时以直连运行')
+                      : tr('内核启动失败，正在自动重试…')}
                   </div>
-                  {status.coreError && <div className="core-error-reason">{status.coreError}</div>}
+                  {status.coreError && <div className="core-error-reason">{trMsg(status.coreError)}</div>}
                   <div className="core-error-hint">
                     {coreState === 'fallback'
-                      ? '本地端口照常可用，流量暂时全部直连。程序会自动重试当前节点，也可以换个节点。'
-                      : '程序会持续自动重试。期间系统代理已暂时关闭，避免断网。'}
+                      ? tr('本地端口照常可用，流量暂时全部直连。程序会自动重试当前节点，也可以换个节点。')
+                      : tr('程序会持续自动重试。期间系统代理已暂时关闭，避免断网。')}
                   </div>
                 </div>
               )}
@@ -1691,15 +1728,15 @@ export default function App() {
                     <div className="acct-head">
                     <div className="acct-id">
                       <span className="acct-email">{account.email}</span>
-                      <span className="acct-plan">{account.planName || 'KNcloud 会员'}</span>
+                      <span className="acct-plan">{account.planName || tr('KNcloud 会员')}</span>
                     </div>
                     <div className="acct-actions">
                       <button
                         type="button"
                         className="acct-action acct-icon-btn"
                         onClick={() => BrowserOpenURL((account.domain || 'https://www.kncloud.top').replace(/\/+$/, '') + '/')}
-                        title={`打开官网（${(account.domain || 'https://www.kncloud.top').replace(/^https?:\/\//, '').replace(/\/+$/, '')}）`}
-                        aria-label="打开官网"
+                        title={tr('打开官网（{domain}）', { domain: (account.domain || 'https://www.kncloud.top').replace(/^https?:\/\//, '').replace(/\/+$/, '') })}
+                        aria-label={tr('打开官网')}
                       >
                         <Globe size={15} />
                       </button>
@@ -1708,8 +1745,8 @@ export default function App() {
                         className="acct-action acct-icon-btn"
                         onClick={handleUpdateSubscription}
                         disabled={syncing}
-                        title={syncing ? '更新中…' : `更新订阅${subscriptions[0] ? '（上次同步 ' + subscriptions[0].updatedAt + '）' : ''}`}
-                        aria-label="更新订阅"
+                        title={syncing ? tr('更新中…') : (tr('更新订阅') + (subscriptions[0] ? tr('（上次同步 {t}）', { t: subscriptions[0].updatedAt }) : ''))}
+                        aria-label={tr('更新订阅')}
                       >
                         <RefreshCw size={15} className={syncing ? 'spin' : ''} />
                       </button>
@@ -1717,8 +1754,8 @@ export default function App() {
                         type="button"
                         className="acct-action acct-icon-btn acct-logout-text"
                         onClick={handleLogout}
-                        title="退出登录"
-                        aria-label="退出登录"
+                        title={tr('退出登录')}
+                        aria-label={tr('退出登录')}
                       >
                         <LogOut size={15} />
                       </button>
@@ -1727,7 +1764,7 @@ export default function App() {
                     <div className="acct-usage">
                       <div className="acct-value">
                         {fmtGB(account.usedUp + account.usedDown)}
-                        <span className="acct-sub"> / {account.transferEnable > 0 ? fmtGB(account.transferEnable) : '无限'} · {account.expire}</span>
+                        <span className="acct-sub"> / {account.transferEnable > 0 ? fmtGB(account.transferEnable) : tr('无限')} · {trMsg(account.expire)}</span>
                       </div>
                       <div className="simple-account-bar acct-bar">
                         <div style={{
@@ -1738,29 +1775,29 @@ export default function App() {
                       </div>
                       <div className="acct-meta">
                         <div className="acct-meta-item">
-                          <span className="acct-meta-label">剩余流量</span>
-                          <span className="acct-meta-val">{account.transferEnable > 0 ? fmtGB(Math.max(0, account.transferEnable - account.usedUp - account.usedDown)) : '无限'}</span>
+                          <span className="acct-meta-label">{tr('剩余流量')}</span>
+                          <span className="acct-meta-val">{account.transferEnable > 0 ? fmtGB(Math.max(0, account.transferEnable - account.usedUp - account.usedDown)) : tr('无限')}</span>
                         </div>
                         <div className="acct-meta-item">
-                          <span className="acct-meta-label">可用节点</span>
-                          <span className="acct-meta-val">{nodes.length} 个</span>
+                          <span className="acct-meta-label">{tr('可用节点')}</span>
+                          <span className="acct-meta-val">{tr('{n} 个', { n: nodes.length })}</span>
                         </div>
                         <div className="acct-meta-item">
-                          <span className="acct-meta-label">上次同步</span>
+                          <span className="acct-meta-label">{tr('上次同步')}</span>
                           <span className="acct-meta-val" title={subscriptions[0]?.updatedAt || ''}>{(subscriptions[0]?.updatedAt || '—').replace(/^\d{4}-/, '')}</span>
                         </div>
                       </div>
                     </div>
                   </div>
-                  <div className="win11-card acct-stat" title="仅统计经代理节点的流量">
-                    <div className="acct-label"><span>实时上传</span><ArrowUpRight size={16} color="#0078d4" /></div>
+                  <div className="win11-card acct-stat" title={tr('仅统计经代理节点的流量')}>
+                    <div className="acct-label"><span>{tr('实时上传')}</span><ArrowUpRight size={16} color="#0078d4" /></div>
                     <div className="acct-speed">{status.upSpeed}</div>
-                    <div className="acct-sub">本地累计上行: {status.totalUp}</div>
+                    <div className="acct-sub">{tr('本地累计上行:')} {status.totalUp}</div>
                   </div>
-                  <div className="win11-card acct-stat" title="仅统计经代理节点的流量">
-                    <div className="acct-label"><span>实时下载</span><ArrowDownLeft size={16} color="#107c41" /></div>
+                  <div className="win11-card acct-stat" title={tr('仅统计经代理节点的流量')}>
+                    <div className="acct-label"><span>{tr('实时下载')}</span><ArrowDownLeft size={16} color="#107c41" /></div>
                     <div className="acct-speed">{status.downSpeed}</div>
-                    <div className="acct-sub">本地累计下行: {status.totalDown}</div>
+                    <div className="acct-sub">{tr('本地累计下行:')} {status.totalDown}</div>
                   </div>
                   {renderModeCard('acct-mode')}
                 </div>
@@ -1779,16 +1816,16 @@ export default function App() {
               <div className="win11-card qp-card">
                 <div className="qp-header">
                   <div className="qp-title">
-                    <h3>节点选择</h3>
+                    <h3>{tr('节点选择')}</h3>
                     {pingInProgress && (
-                      <span className="qp-testing"><LoaderCircle size={12} className="spin" />测速中…</span>
+                      <span className="qp-testing"><LoaderCircle size={12} className="spin" />{tr('测速中…')}</span>
                     )}
                   </div>
                   <div className="qp-actions">
                     <button
                       className="win11-btn qp-icon-btn"
                       onClick={() => setActiveTab('servers')}
-                      title="节点列表（编辑 / 导入 / 批量管理）"
+                      title={tr('节点列表（编辑 / 导入 / 批量管理）')}
                     >
                       <List size={13} />
                     </button>
@@ -1796,14 +1833,14 @@ export default function App() {
                       className="win11-btn qp-icon-btn"
                       onClick={handleRetestAll}
                       disabled={pingInProgress || nodes.length === 0}
-                      title="重新测速全部节点"
+                      title={tr('重新测速全部节点')}
                     >
                       <Gauge size={14} />
                     </button>
                   </div>
                 </div>
                 {nodes.length === 0 ? (
-                  <div className="qp-empty">暂无节点，请先更新订阅或导入节点</div>
+                  <div className="qp-empty">{tr('暂无节点，请先更新订阅或导入节点')}</div>
                 ) : (
                   <div className="qp-grid">
                     {quickPickNodes.map(node => (
@@ -1831,7 +1868,7 @@ export default function App() {
                                   </span>
                                   {tileDelayText(node.delay)}
                                 </span>
-                                {node.active && <span className="qp-current">当前</span>}
+                                {node.active && <span className="qp-current">{tr('当前')}</span>}
                               </span>
                             </>
                           );
@@ -1849,34 +1886,34 @@ export default function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div className="content-header" style={{ marginBottom: '4px', alignItems: 'center', gap: '16px' }}>
                 <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <button className="win11-btn qp-icon-btn" onClick={() => setActiveTab('dashboard')} title="返回仪表盘">
+                  <button className="win11-btn qp-icon-btn" onClick={() => setActiveTab('dashboard')} title={tr('返回仪表盘')}>
                     <ArrowLeft size={14} />
                   </button>
-                  <h1 className="content-title" style={{ margin: 0 }}>节点列表</h1>
+                  <h1 className="content-title" style={{ margin: 0 }}>{tr('节点列表')}</h1>
                   {/* 操作说明收进 ?：悬停（桌面）或点击显示 */}
-                  <span className="help-pop" tabIndex={0} aria-label="操作说明">
+                  <span className="help-pop" tabIndex={0} aria-label={tr('操作说明')}>
                     <CircleHelp size={15} />
                     <span className="help-pop-body" role="tooltip">
-                      <b>操作说明</b>
-                      <span>单击选中，再点一次取消</span>
-                      <span>点复选框、Ctrl+点击或拖动框选：多选</span>
-                      <span><kbd>Enter</kbd> 启用选中的节点（仅选中一个时）</span>
-                      <span><kbd>Ctrl+A</kbd> 全选 · <kbd>Esc</kbd> 取消选择</span>
-                      <span><kbd>Ctrl+R</kbd> 测速选中节点（<kbd>Ctrl+A</kbd> 后按即全部测速）</span>
-                      <span><kbd>Delete</kbd> 删除选中节点</span>
-                      <span><kbd>Ctrl+C</kbd> 复制当前节点链接 · <kbd>Ctrl+V</kbd> 从剪贴板导入</span>
-                      <span className="help-pop-note">切换节点主要在仪表盘的快速选择里进行</span>
+                      <b>{tr('操作说明')}</b>
+                      <span>{tr('单击选中，再点一次取消')}</span>
+                      <span>{tr('点复选框、Ctrl+点击或拖动框选：多选')}</span>
+                      <span><kbd>Enter</kbd> {tr('启用选中的节点（仅选中一个时）')}</span>
+                      <span><kbd>Ctrl+A</kbd> {tr('全选')} · <kbd>Esc</kbd> {tr('取消选择')}</span>
+                      <span><kbd>Ctrl+R</kbd> {tr('测速选中节点（')}<kbd>Ctrl+A</kbd>{tr(' 后按即全部测速）')}</span>
+                      <span><kbd>Delete</kbd> {tr('删除选中节点')}</span>
+                      <span><kbd>Ctrl+C</kbd> {tr('复制当前节点链接')} · <kbd>Ctrl+V</kbd> {tr('从剪贴板导入')}</span>
+                      <span className="help-pop-note">{tr('切换节点主要在仪表盘的快速选择里进行')}</span>
                     </span>
                   </span>
                   {selectedNodeIds.length > 0 && (
-                    <span className="sel-count">已选 {selectedNodeIds.length}</span>
+                    <span className="sel-count">{tr('已选 {n}', { n: selectedNodeIds.length })}</span>
                   )}
                 </div>
                 <button
                   className="win11-btn primary icon-only"
                   onClick={() => setShowAddNodeModal(true)}
-                  title="添加节点"
-                  aria-label="添加节点"
+                  title={tr('添加节点')}
+                  aria-label={tr('添加节点')}
                 >
                   <Plus size={16} />
                 </button>
@@ -1944,7 +1981,7 @@ export default function App() {
                         <div
                           role="checkbox"
                           aria-checked={isSelected}
-                          title={isSelected ? '取消选择' : '加入选择'}
+                          title={isSelected ? tr('取消选择') : tr('加入选择')}
                           onClick={(e) => {
                             // 复选框：加选 / 减选（多选），不影响其它已选节点
                             e.stopPropagation();
@@ -1987,17 +2024,17 @@ export default function App() {
                                 alignItems: 'center',
                                 lineHeight: '1.2'
                               }}>
-                                活动
+                                {tr('活动')}
                               </span>
                             )}
                             {isSwitching && (
                               <span style={{ fontSize: '11px', color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                <RefreshCw size={11} className="spin" /> 切换中…
+                                <RefreshCw size={11} className="spin" /> {tr('切换中…')}
                               </span>
                             )}
                           </div>
                           <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                            {node.address}:{node.port} · 安全: {node.security} · 传输: {node.network}
+                            {node.address}:{node.port} · {tr('安全:')} {node.security} · {tr('传输:')} {node.network}
                           </div>
                         </div>
                       </div>
@@ -2006,7 +2043,7 @@ export default function App() {
                       {(node.delay > 0 || node.delay === -2) && (
                         <span className={`latency-pill ${node.delay > 0 && node.delay < 300 ? 'latency-good' : node.delay < 800 ? 'latency-medium' : 'latency-none'}`} style={{ fontSize: '12px' }}>
                           <Zap size={13} />
-                          {node.delay > 0 ? `${node.delay} ms` : '超时'}
+                          {node.delay > 0 ? `${node.delay} ms` : tr('超时')}
                         </span>
                       )}
 
@@ -2015,7 +2052,7 @@ export default function App() {
                           className="win11-btn"
                           style={{ height: '28px', padding: '0 8px' }}
                           onClick={(e) => openEditNode(node, e)}
-                          title="编辑节点"
+                          title={tr('编辑节点')}
                         >
                           <Pencil size={12} />
                         </button>
@@ -2023,7 +2060,7 @@ export default function App() {
                           className="win11-btn"
                           style={{ height: '28px', padding: '0 8px' }}
                           onClick={(e) => handlePingSingleNode(node.id, e)}
-                          title="真连接测速"
+                          title={tr('真连接测速')}
                         >
                           <Gauge size={12} />
                         </button>
@@ -2031,7 +2068,7 @@ export default function App() {
                           className="win11-btn danger"
                           style={{ height: '28px', padding: '0 8px' }}
                           onClick={(e) => handleDeleteNode(node.id, e)}
-                          title="删除节点"
+                          title={tr('删除节点')}
                         >
                           <Trash2 size={12} />
                         </button>
@@ -2049,8 +2086,8 @@ export default function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', height: '100%' }}>
               <div className="content-header" style={{ marginBottom: 0 }}>
                 <div>
-                  <h1 className="content-title">实时运行日志</h1>
-                  <p className="content-subtitle">查看代理核心的连接追踪、分流判定与警告异常</p>
+                  <h1 className="content-title">{tr('实时运行日志')}</h1>
+                  <p className="content-subtitle">{tr('查看代理核心的连接追踪、分流判定与警告异常')}</p>
                 </div>
               </div>
 
@@ -2076,14 +2113,31 @@ export default function App() {
           {activeTab === 'settings' && (
             <div className="prefs">
               <div className="prefs-header">
-                <h1 className="content-title">首选项设置</h1>
-                <p className="content-subtitle">配置本地监听端口、内核、DNS 与系统集成</p>
+                <h1 className="content-title">{tr('首选项设置')}</h1>
+                <p className="content-subtitle">{tr('配置本地监听端口、内核、DNS 与系统集成')}</p>
               </div>
 
               <section className="prefs-section">
-                <h2 className="prefs-section-title">本地代理</h2>
+                <h2 className="prefs-section-title">{tr('界面')}</h2>
                 <div className="prefs-group">
-                  {prefRow(<Plug size={16} />, 'SOCKS5 代理端口', '本机 SOCKS5 监听端口，默认 10808', (
+                  {prefRow(<Languages size={16} />, lang === 'en' ? 'Language · 语言' : '语言 · Language', tr('界面显示语言，默认跟随系统'), (
+                    <select
+                      className="win11-input prefs-select-sm"
+                      value={langPref}
+                      onChange={e => handleLanguageSelect(e.target.value)}
+                    >
+                      {LANG_OPTIONS.map(o => (
+                        <option key={o.value} value={o.value}>{lang === 'en' ? o.en : o.zh}</option>
+                      ))}
+                    </select>
+                  ))}
+                </div>
+              </section>
+
+              <section className="prefs-section">
+                <h2 className="prefs-section-title">{tr('本地代理')}</h2>
+                <div className="prefs-group">
+                  {prefRow(<Plug size={16} />, tr('SOCKS5 代理端口'), tr('本机 SOCKS5 监听端口，默认 10808'), (
                     <input
                       type="number"
                       className="win11-input prefs-input-num"
@@ -2091,7 +2145,7 @@ export default function App() {
                       onChange={e => setLocalSettings({ ...settings, socksPort: parseInt(e.target.value, 10) || 10808 })}
                     />
                   ))}
-                  {prefRow(<Globe size={16} />, 'HTTP / HTTPS 代理端口', '系统代理使用的 HTTP 监听端口，默认 10809', (
+                  {prefRow(<Globe size={16} />, tr('HTTP / HTTPS 代理端口'), tr('系统代理使用的 HTTP 监听端口，默认 10809'), (
                     <input
                       type="number"
                       className="win11-input prefs-input-num"
@@ -2099,25 +2153,25 @@ export default function App() {
                       onChange={e => setLocalSettings({ ...settings, httpPort: parseInt(e.target.value, 10) || 10809 })}
                     />
                   ))}
-                  {prefRow(<Wifi size={16} />, '允许局域网连接', '让同一局域网的设备通过本机 IP 和上面的端口代理上网', prefToggle('allowLan'))}
+                  {prefRow(<Wifi size={16} />, tr('允许局域网连接'), tr('让同一局域网的设备通过本机 IP 和上面的端口代理上网'), prefToggle('allowLan'))}
                 </div>
               </section>
 
               <section className="prefs-section">
-                <h2 className="prefs-section-title">内核与解析</h2>
+                <h2 className="prefs-section-title">{tr('内核与解析')}</h2>
                 <div className="prefs-group">
-                  {prefRow(<Cpu size={16} />, '代理内核', 'Xray-core 协议支持最全，推荐保持默认', (
+                  {prefRow(<Cpu size={16} />, tr('代理内核'), tr('Xray-core 协议支持最全，推荐保持默认'), (
                     <select
                       className="win11-input prefs-select"
                       value={settings.coreType}
                       onChange={e => setLocalSettings({ ...settings, coreType: e.target.value })}
                     >
-                      <option value="Xray-core">Xray-core（推荐）</option>
-                      <option value="V2Ray-core">V2Ray-core（传统稳定版）</option>
+                      <option value="Xray-core">{tr('Xray-core（推荐）')}</option>
+                      <option value="V2Ray-core">{tr('V2Ray-core（传统稳定版）')}</option>
                     </select>
                   ))}
-                  {prefRow(<Layers size={16} />, 'MUX 多路复用', '合并 TCP 连接，降低握手延迟', prefToggle('muxEnabled'))}
-                  {prefRow(<Server size={16} />, 'DNS 服务器', '远程与直连解析使用的 DNS，多个用英文逗号分隔', (
+                  {prefRow(<Layers size={16} />, tr('MUX 多路复用'), tr('合并 TCP 连接，降低握手延迟'), prefToggle('muxEnabled'))}
+                  {prefRow(<Server size={16} />, tr('DNS 服务器'), tr('远程与直连解析使用的 DNS，多个用英文逗号分隔'), (
                     <input
                       type="text"
                       className="win11-input prefs-input-wide"
@@ -2129,19 +2183,19 @@ export default function App() {
               </section>
 
               <section className="prefs-section">
-                <h2 className="prefs-section-title">启动与托盘</h2>
+                <h2 className="prefs-section-title">{tr('启动与托盘')}</h2>
                 <div className="prefs-group">
-                  {prefRow(<Power size={16} />, '开机自动启动', '登录 Windows 后自动启动并最小化到托盘（通过「任务计划程序」实现）', prefToggle('autoStart'),
-                    autoStartError ? `开机自启配置失败：${autoStartError}（详见日志）` : '')}
-                  {prefRow(<Monitor size={16} />, '关闭窗口时最小化到托盘', '关闭主窗口后继续在托盘运行；右键托盘图标可切换模式、节点或退出', prefToggle('minimizeToTray'))}
-                  {prefRow(<RefreshCw size={16} />, '自动更新订阅', '登录官网账户后，每周自动刷新套餐流量并同步最新节点', (
+                  {prefRow(<Power size={16} />, tr('开机自动启动'), tr('登录 Windows 后自动启动并最小化到托盘（通过「任务计划程序」实现）'), prefToggle('autoStart'),
+                    autoStartError ? tr('开机自启配置失败：{err}（详见日志）', { err: trMsg(autoStartError) }) : '')}
+                  {prefRow(<Monitor size={16} />, tr('关闭窗口时最小化到托盘'), tr('关闭主窗口后继续在托盘运行；右键托盘图标可切换模式、节点或退出'), prefToggle('minimizeToTray'))}
+                  {prefRow(<RefreshCw size={16} />, tr('自动更新订阅'), tr('登录官网账户后，每周自动刷新套餐流量并同步最新节点'), (
                     <select
                       className="win11-input prefs-select-sm"
                       value={(settings.subUpdateHours || 0) < 0 ? -1 : 0}
                       onChange={e => setLocalSettings({ ...settings, subUpdateHours: parseInt(e.target.value, 10) })}
                     >
-                      <option value={0}>每周（默认）</option>
-                      <option value={-1}>关闭</option>
+                      <option value={0}>{tr('每周（默认）')}</option>
+                      <option value={-1}>{tr('关闭@@off')}</option>
                     </select>
                   ))}
                 </div>
@@ -2150,12 +2204,12 @@ export default function App() {
               {/* 关于与更新（纯手动：点「检查更新」才联网，点「立即更新」才下载安装） */}
 
               <section className="prefs-section">
-                <h2 className="prefs-section-title">关于</h2>
+                <h2 className="prefs-section-title">{tr('关于')}</h2>
                 <div className="prefs-group">
-                  {prefRow(<Info size={16} />, `KNcloud-WIN ${appVersion || '…'}`, '从 GitHub Releases 检查新版本；不会自动下载或安装，更新时保留配置与日志', (
+                  {prefRow(<Info size={16} />, `KNcloud-WIN ${appVersion || '…'}`, tr('从 GitHub Releases 检查新版本；不会自动下载或安装，更新时保留配置与日志'), (
                     <button className="win11-btn" onClick={handleCheckUpdate} disabled={updChecking || updBusy}>
                       <RefreshCw size={13} className={updChecking ? 'spin' : ''} />
-                      <span>{updChecking ? '检查中…' : '检查更新'}</span>
+                      <span>{updChecking ? tr('检查中…') : tr('检查更新')}</span>
                     </button>
                   ))}
                   {(updInfo || updProgress.stage !== 'idle') && (
@@ -2164,8 +2218,8 @@ export default function App() {
                         <div className="update-result">
                           <div className={`update-msg ${updInfo.hasUpdate ? 'has-update' : ''}`}>
                             {updInfo.hasUpdate
-                              ? `发现新版本 ${updInfo.latestVersion}${updInfo.publishedAt ? '（' + updInfo.publishedAt.slice(0, 10) + '）' : ''}`
-                              : (updInfo.message || '已是最新版本') + (updInfo.latestVersion && !updInfo.hasUpdate ? ` · 最新发布 ${updInfo.latestVersion}` : '')}
+                              ? tr('发现新版本 {v}', { v: updInfo.latestVersion }) + (updInfo.publishedAt ? tr('（{v}）', { v: updInfo.publishedAt.slice(0, 10) }) : '')
+                              : trMsg(updInfo.message || '已是最新版本') + (updInfo.latestVersion && !updInfo.hasUpdate ? tr(' · 最新发布 {v}', { v: updInfo.latestVersion }) : '')}
                           </div>
                           {updInfo.hasUpdate && updInfo.notes && (
                             <pre className="update-notes">{updInfo.notes}</pre>
@@ -2174,15 +2228,15 @@ export default function App() {
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                               <button className="win11-btn primary" onClick={handleStartUpdate} disabled={updBusy}>
                                 <ArrowDownLeft size={13} />
-                                <span>{updBusy ? '更新中…' : '立即更新'}</span>
+                                <span>{updBusy ? tr('更新中…') : tr('立即更新')}</span>
                               </button>
                               {updInfo.assetSize > 0 && (
                                 <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
-                                  安装包 {(updInfo.assetSize / 1048576).toFixed(1)} MB · 完成后自动重启
+                                  {tr('安装包 {mb} MB · 完成后自动重启', { mb: (updInfo.assetSize / 1048576).toFixed(1) })}
                                 </span>
                               )}
                               {updInfo.releaseUrl && (
-                                <button type="button" className="core-link" onClick={() => BrowserOpenURL(updInfo.releaseUrl)}>查看发布页</button>
+                                <button type="button" className="core-link" onClick={() => BrowserOpenURL(updInfo.releaseUrl)}>{tr('查看发布页')}</button>
                               )}
                             </div>
                           )}
@@ -2195,7 +2249,7 @@ export default function App() {
                               <div style={{ width: Math.max(2, Math.min(100, updProgress.percent || 0)) + '%' }} />
                             </div>
                           )}
-                          <div className={`update-progress-msg ${updProgress.stage === 'error' ? 'error' : ''}`}>{updProgress.message}</div>
+                          <div className={`update-progress-msg ${updProgress.stage === 'error' ? 'error' : ''}`}>{trMsg(updProgress.message)}</div>
                         </div>
                       )}
                     </div>
@@ -2212,14 +2266,14 @@ export default function App() {
       {showAddNodeModal && (
         <div className="modal-overlay" onClick={() => { setShowAddNodeModal(false); resetNodeForm(); }}>
           <div className="win11-dialog" onClick={e => e.stopPropagation()}>
-            <h2 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)' }}>{editingNodeId ? '编辑节点' : '添加节点'}</h2>
+            <h2 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)' }}>{editingNodeId ? tr('编辑节点') : tr('添加节点')}</h2>
             
             <div className="form-group">
-              <label className="form-label">节点名称 (备注)</label>
+              <label className="form-label">{tr('节点名称 (备注)')}</label>
               <input
                 type="text"
                 className="win11-input"
-                placeholder="例如: 日本东京 01"
+                placeholder={tr('例如: 日本东京 01')}
                 value={newNode.name}
                 onChange={e => setNewNode({ ...newNode, name: e.target.value })}
               />
@@ -2227,7 +2281,7 @@ export default function App() {
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
               <div className="form-group">
-                <label className="form-label">协议类型</label>
+                <label className="form-label">{tr('协议类型')}</label>
                 <select
                   className="win11-input"
                   value={newNode.protocol}
@@ -2243,7 +2297,7 @@ export default function App() {
               </div>
 
               <div className="form-group">
-                <label className="form-label">传输协议 (Network)</label>
+                <label className="form-label">{tr('传输协议 (Network)')}</label>
                 <select
                   className="win11-input"
                   value={newNode.network}
@@ -2259,7 +2313,7 @@ export default function App() {
 
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px' }}>
               <div className="form-group">
-                <label className="form-label">服务器地址 (Domain / IP)</label>
+                <label className="form-label">{tr('服务器地址 (Domain / IP)')}</label>
                 <input
                   type="text"
                   className="win11-input"
@@ -2270,7 +2324,7 @@ export default function App() {
               </div>
 
               <div className="form-group">
-                <label className="form-label">端口 (Port)</label>
+                <label className="form-label">{tr('端口 (Port)')}</label>
                 <input
                   type="number"
                   className="win11-input"
@@ -2281,19 +2335,19 @@ export default function App() {
             </div>
 
             <div className="form-group">
-              <label className="form-label">用户 ID / 密码 (UUID / Password)</label>
+              <label className="form-label">{tr('用户 ID / 密码 (UUID / Password)')}</label>
               <input
                 type="text"
                 className="win11-input"
-                placeholder="UUID 字符串或连接密钥"
+                placeholder={tr('UUID 字符串或连接密钥')}
                 value={newNode.uuid}
                 onChange={e => setNewNode({ ...newNode, uuid: e.target.value })}
               />
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
-              <button className="win11-btn" onClick={() => { setShowAddNodeModal(false); resetNodeForm(); }}>取消</button>
-              <button className="win11-btn primary" onClick={handleCreateNode}>{editingNodeId ? '保存修改' : '添加并保存'}</button>
+              <button className="win11-btn" onClick={() => { setShowAddNodeModal(false); resetNodeForm(); }}>{tr('取消')}</button>
+              <button className="win11-btn primary" onClick={handleCreateNode}>{editingNodeId ? tr('保存修改') : tr('添加并保存')}</button>
             </div>
           </div>
         </div>
@@ -2311,16 +2365,16 @@ export default function App() {
       {deleteConfirmIds && (
         <div className="modal-overlay" onClick={() => setDeleteConfirmIds(null)}>
           <div className="win11-dialog" onClick={e => e.stopPropagation()} style={{ maxWidth: '380px' }}>
-            <h2 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)' }}>删除节点</h2>
+            <h2 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)' }}>{tr('删除节点')}</h2>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '8px 0 4px' }}>
               {deleteConfirmIds.length === 1
-                ? `确定删除「${(nodes.find(n => n.id === deleteConfirmIds[0]) || {}).name || '该节点'}」吗？`
-                : `确定删除选中的 ${deleteConfirmIds.length} 个节点吗？`}
-              {nodes.some(n => n.active && deleteConfirmIds.includes(n.id)) && ' 其中包含当前正在使用的节点。'}
+                ? tr('确定删除「{name}」吗？', { name: (nodes.find(n => n.id === deleteConfirmIds[0]) || {}).name || tr('该节点') })
+                : tr('确定删除选中的 {n} 个节点吗？', { n: deleteConfirmIds.length })}
+              {nodes.some(n => n.active && deleteConfirmIds.includes(n.id)) && tr(' 其中包含当前正在使用的节点。')}
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '14px' }}>
-              <button className="win11-btn" onClick={() => setDeleteConfirmIds(null)}>取消</button>
-              <button className="win11-btn danger" onClick={confirmDeleteNodes}>删除</button>
+              <button className="win11-btn" onClick={() => setDeleteConfirmIds(null)}>{tr('取消')}</button>
+              <button className="win11-btn danger" onClick={confirmDeleteNodes}>{tr('删除')}</button>
             </div>
           </div>
         </div>
@@ -2329,23 +2383,23 @@ export default function App() {
       {showImportModal && (
         <div className="modal-overlay" onClick={() => setShowImportModal(false)}>
           <div className="win11-dialog" onClick={e => e.stopPropagation()}>
-            <h2 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)' }}>批量导入分享链接</h2>
+            <h2 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)' }}>{tr('批量导入分享链接')}</h2>
             <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 10px' }}>
-              每行一条，支持 vmess:// vless:// trojan:// ss:// anytls:// hysteria2:// 链接，或直接粘贴 Base64 订阅内容。
+              {tr('每行一条，支持 vmess:// vless:// trojan:// ss:// anytls:// hysteria2:// 链接，或直接粘贴 Base64 订阅内容。')}
             </p>
             <div className="form-group">
               <textarea
                 className="win11-input"
                 rows={8}
-                placeholder={'vless://uuid@host:443?security=reality&type=grpc#节点名\nvmess://eyJ2IjoiMiIsLi4u\nss://YWVzLTI1Ni1nY206cGFzcw==@host:8388#SS节点'}
+                placeholder={tr('vless://uuid@host:443?security=reality&type=grpc#节点名\nvmess://eyJ2IjoiMiIsLi4u\nss://YWVzLTI1Ni1nY206cGFzcw==@host:8388#SS节点')}
                 value={importText}
                 onChange={e => setImportText(e.target.value)}
                 style={{ fontFamily: 'Consolas, monospace', fontSize: '12px', resize: 'vertical' }}
               />
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
-              <button className="win11-btn" onClick={() => setShowImportModal(false)}>取消</button>
-              <button className="win11-btn primary" onClick={handleImportLinks}>解析并导入</button>
+              <button className="win11-btn" onClick={() => setShowImportModal(false)}>{tr('取消')}</button>
+              <button className="win11-btn primary" onClick={handleImportLinks}>{tr('解析并导入')}</button>
             </div>
           </div>
         </div>

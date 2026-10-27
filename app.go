@@ -112,6 +112,8 @@ type AppSettings struct {
 	MinimizeToTray bool `json:"minimizeToTray"`
 	// SubUpdateHours 自动更新订阅：-1 = 关闭，其余（含旧版本的 1/3/6/12/24）= 每周一次。
 	SubUpdateHours int `json:"subUpdateHours"`
+	// Language 界面语言：system（跟随系统，默认）/ zh-CN / en。前端读写；托盘与原生对话框按生效语言显示（见 i18n.go）。
+	Language string `json:"language"`
 }
 
 type App struct {
@@ -1464,6 +1466,12 @@ func (a *App) SaveSettings(settings AppSettings) error {
 	}
 	if settings.HttpPort <= 0 || settings.HttpPort > 65535 {
 		settings.HttpPort = old.HttpPort
+	}
+	if !validLanguage(settings.Language) {
+		settings.Language = old.Language
+		if !validLanguage(settings.Language) {
+			settings.Language = "system"
+		}
 	}
 	if !validTheme(settings.Theme) {
 		settings.Theme = old.Theme
