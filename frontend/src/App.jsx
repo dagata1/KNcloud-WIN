@@ -3,53 +3,7 @@ import kncFgWhite from './assets/knc-fg-white.png';
 import kncLoginDark from './assets/knc-login-dark.png';
 import kncLoginLight from './assets/knc-login-light.png';
 import React, { useState, useEffect, useRef } from 'react';
-import {
-  Shield,
-  Activity,
-  Server,
-  GitFork,
-  BookOpen,
-  Terminal,
-  Settings,
-  Menu,
-  Sun,
-  Moon,
-  Monitor,
-  Minus,
-  Square,
-  X,
-  Play,
-  Pause,
-  RefreshCw,
-  Plus,
-  Trash2,
-  Zap,
-  Globe,
-  ArrowUpRight,
-  ArrowDownLeft,
-  CheckCircle2,
-  Sliders,
-  Search,
-  Check,
-  Copy,
-  Pencil,
-  ChevronDown,
-  LayoutGrid,
-  SlidersHorizontal,
-  FolderInput,
-  LoaderCircle,
-  Gauge,
-  LogOut,
-  CircleHelp,
-  ArrowLeft,
-  List,
-  Plug,
-  Wifi,
-  Cpu,
-  Layers,
-  Power,
-  Info,
-} from 'lucide-react';
+import { Shield, Activity, Server, GitFork, BookOpen, Terminal, Settings, Menu, Sun, Moon, Monitor, Minus, Square, X, Play, Pause, RefreshCw, Plus, Trash2, Zap, Globe, ArrowUpRight, ArrowDownLeft, CheckCircle2, Sliders, Search, Check, Copy, Pencil, ChevronDown, LayoutGrid, SlidersHorizontal, FolderInput, LoaderCircle, Gauge, LogOut, CircleHelp, ArrowLeft, List, Plug, Wifi, Cpu, Layers, Power, Info } from 'lucide-react';
 
 import {
   GetNodes,
@@ -1566,7 +1520,7 @@ export default function App() {
               </div>
   );
 
-  const inSettings = activeTab === 'settings' || activeTab === 'routing' || activeTab === 'logs';
+  const inSettings = activeTab === 'settings' || activeTab === 'logs';
   const prefsDirty = prefsBaseline !== '' && prefSig(settings) !== prefsBaseline;
   // 设置页一行：左侧图标 + 标题/说明（可带错误提示），右侧控件。普通函数而非组件，避免输入框重挂载丢焦点
   const prefRow = (icon, title, desc, control, error) => (
@@ -1592,7 +1546,6 @@ export default function App() {
   );
   const settingsTabs = [
     { id: 'settings', label: '常规设置' },
-    { id: 'routing', label: '路由分流' },
     { id: 'logs', label: '实时日志' },
   ];
 
@@ -2070,42 +2023,6 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 3: ROUTING */}
-          {activeTab === 'routing' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-              <div className="content-header">
-                <div>
-                  <h1 className="content-title">路由与分流规则</h1>
-                  <p className="content-subtitle">智能域名解析与流量分流（基于 GEOIP & GEOSITE）</p>
-                </div>
-              </div>
-
-              {/* Domain Rule Cards */}
-              <div className="win11-card" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <h3 style={{ fontSize: '14px', fontWeight: 600 }}>预设规则集开关</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {[
-                    { title: '绕过局域网私有网段 (Private IPs)', desc: '10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 走直连', active: true },
-                    { title: '拦截常见广告与恶意跟踪追踪 (AdBlock)', desc: 'geosite:category-ads-all 直接阻断 (Block)', active: true },
-                    { title: 'AI 智能助手服务优化 (OpenAI, Claude, Gemini)', desc: '强制锁定特定专线低延迟节点路由', active: true },
-                    { title: '国外流媒体解锁路由 (Netflix / Disney+)', desc: '自动匹配支持原生 IP 解锁的目标节点', active: false }
-                  ].map((rule, idx) => (
-                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border-subtle)' }}>
-                      <div>
-                        <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)' }}>{rule.title}</div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>{rule.desc}</div>
-                      </div>
-                      <label className="win11-toggle">
-                        <input type="checkbox" defaultChecked={rule.active} />
-                        <span className="toggle-track"><span className="toggle-thumb" /></span>
-                      </label>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* TAB 5: LOGS */}
           {activeTab === 'logs' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', height: '100%' }}>
@@ -2210,6 +2127,14 @@ export default function App() {
               </section>
 
               {/* 关于与更新（纯手动：点「检查更新」才联网，点「立即更新」才下载安装） */}
+              <section className="prefs-section">
+                <h2 className="prefs-section-title">分流规则</h2>
+                <div className="prefs-group">
+                  {prefRow(<Wifi size={16} />, '局域网与私有地址直连', '10.0.0.0/8、172.16.0.0/12、192.168.0.0/16 等私有网段始终不走代理', <span className="prefs-row-desc">始终开启</span>)}
+                  {prefRow(<Shield size={16} />, '拦截广告与跟踪', '命中 geosite:category-ads-all 的域名直接阻断', <span className="prefs-row-desc">始终开启</span>)}
+                </div>
+              </section>
+
               <section className="prefs-section">
                 <h2 className="prefs-section-title">关于</h2>
                 <div className="prefs-group">
