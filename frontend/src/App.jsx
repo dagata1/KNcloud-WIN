@@ -90,10 +90,10 @@ let lastMenuPingAt = 0;
 
 export default function App() {
   // 简易模式内容少，窗口切到紧凑尺寸；普通模式恢复默认大小
-  // （全局最小尺寸在 main.go 里放开了到 380x560，这里的目标值在其之上）
-  const WINDOW_SIZE = { simple: { w: 420, h: 525 }, classic: { w: 1120, h: 760 } };
+  // （全局最小尺寸在 main.go 里放开了到 380x500，这里的目标值在其之上）
+  const WINDOW_SIZE = { simple: { w: 420, h: 505 }, classic: { w: 1120, h: 760 } };
   // 按屏幕分辨率等比例缩放窗口（只缩小不放大）：以 1920×1040 工作区（1080p 去掉任务栏）为基准，
-  // 宽高同一比例缩放保持窗口比例；不超过工作区 92%，不小于全局最小尺寸 380×560。
+  // 宽高同一比例缩放保持窗口比例；不超过工作区 92%，不小于全局最小尺寸 380×500。
   // screen.avail* 是 CSS 像素（已除以 DPI 缩放），与 WindowSetSize 的逻辑像素一致。
   const scaledWindowSize = (base) => {
     const aw = (window.screen && window.screen.availWidth) || 1920;
@@ -104,7 +104,7 @@ export default function App() {
     k = Math.min(k, (aw * 0.92) / base.w, (ah * 0.92) / base.h);
     return {
       w: Math.max(380, Math.round(base.w * k)),
-      h: Math.max(560, Math.round(base.h * k)),
+      h: Math.max(500, Math.round(base.h * k)),
     };
   };
   const applyWindowSize = async (mode) => {
