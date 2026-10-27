@@ -150,6 +150,8 @@ type App struct {
 	tunUDPPort        int               // TUN 开启时 UDP 专用（不嗅探）SOCKS 入站端口；0 = 未启用
 	tunDNSGuard       *tunDNSGuard      // TUN 开启时拦截发往物理网卡 DNS 的查询（WFP 动态会话）
 	tunV6             bool              // 是否写过 2000::/3 防泄漏路由
+	tunPrefer4        bool              // TUN 未接管 IPv6 时临时让系统优先 IPv4（tunprefer4.go）
+	tunPrefer4Orig    [2]string         // 改动前 ::ffff:0:0/96 的优先级与标签
 	tunNode6          *tunNodeV6        // 双栈节点走 IPv6 时写入的节点 /128（tunnode6.go）；nil = 走 IPv4
 	tunPinV6          map[string]net.IP // TUN 下按节点地址登记的 IPv6 钉 IP（SS/SOCKS 出站用）
 	tunPausedSysProxy bool              // TUN 开启时暂停了 Windows 系统代理，关 TUN 时恢复

@@ -324,6 +324,10 @@ func (a *App) tunStartLocked() error {
 			a.addLogInternal("warn", fmt.Sprintf("TUN: IPv6 leak-protection route not installed: %v", err))
 		}
 	}
+	if !a.tunV6 {
+		// IPv6 没进虚拟网卡（原生引擎 / 非默认路由形态 / 路由写入失败）：让系统优先 IPv4，避免 IPv6 直连绕过代理
+		a.tunPreferIPv4Locked()
+	}
 	a.tunRunning = true
 	a.suspendSystemProxyForTunLocked()
 	go flushDnsClientCache() // 异步：此处持有 a.mu，不等外部命令
@@ -412,6 +416,7 @@ func (a *App) resumeSystemProxyAfterTunLocked() {
 // removeTapRouting 撤除 TUN 写入的全部路由与 DNS 劫持（网卡保留）。
 // 不依赖 tunRunning：失败路径的半装状态同样按账清理。
 func (a *App) removeTapRouting() {
+	a.tunRestoreIPv4PrefLocked()
 	if a.tunNode6 != nil {
 		removeNodeV6Route(a.tunNode6)
 		a.tunNode6 = nil
