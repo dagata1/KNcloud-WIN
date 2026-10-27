@@ -75,6 +75,11 @@ func (a *App) loadPersisted() bool {
 	if !validTheme(a.settings.Theme) {
 		a.settings.Theme = "system"
 	}
+	// 旧配置没有 language：按跟随系统处理
+	if !validLanguage(a.settings.Language) {
+		a.settings.Language = "system"
+	}
+	applyLanguagePref(a.settings.Language)
 	// 旧版本配置文件里没有 minimizeToTray 字段：默认开启「关闭窗口最小化到托盘」
 	if !settingsHasKey(data, "minimizeToTray") {
 		a.settings.MinimizeToTray = true
