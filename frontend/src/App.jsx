@@ -91,7 +91,7 @@ let lastMenuPingAt = 0;
 export default function App() {
   // 简易模式内容少，窗口切到紧凑尺寸；普通模式恢复默认大小
   // （全局最小尺寸在 main.go 里放开了到 380x560，这里的目标值在其之上）
-  const WINDOW_SIZE = { simple: { w: 420, h: 640 }, classic: { w: 1120, h: 760 } };
+  const WINDOW_SIZE = { simple: { w: 420, h: 525 }, classic: { w: 1120, h: 760 } };
   // 按屏幕分辨率等比例缩放窗口（只缩小不放大）：以 1920×1040 工作区（1080p 去掉任务栏）为基准，
   // 宽高同一比例缩放保持窗口比例；不超过工作区 92%，不小于全局最小尺寸 380×560。
   // screen.avail* 是 CSS 像素（已除以 DPI 缩放），与 WindowSetSize 的逻辑像素一致。
@@ -502,13 +502,13 @@ export default function App() {
   };
 
   // 简易模式：一键切换分流策略（内核与系统代理由程序启动逻辑自动开启，按钮不再启停 TUN）
-  //   点击连接 = 绕过大陆（海外走代理、大陆直连）；点击断开 = 全局直连
+  //   点击连接 = 全局代理（全部经节点）；点击断开 = 全局直连。普通模式选的绕过大陆/TUN 也视为已连接
   const handleSimpleConnect = async () => {
     // TUN 运行中也算「已连接」：断开 = 关 TUN 并切到全局直连
-    const connected = status.tunnelMode || status.routingMode === 'bypass-cn';
-    const next = connected ? 'direct' : 'bypass-cn';
+    const connected = status.tunnelMode || (status.routingMode || 'bypass-cn') !== 'direct';
+    const next = connected ? 'direct' : 'global';
     // 连接动作一发出就进入「正在连接…」，检测结果由下面的自动检测更新
-    setSimpleNet(next === 'bypass-cn' ? 'checking' : 'idle');
+    setSimpleNet(next === 'global' ? 'checking' : 'idle');
     try {
       await SetRoutingMode(next);
     } catch (e) {
@@ -1340,7 +1340,7 @@ export default function App() {
     const activeNode = nodes.find(n => n.active);
     // 简易模式：绕过大陆或 TUN（普通模式里开启的）都算已连接
     const routing = status.routingMode || 'bypass-cn';
-    const simpleOn = status.tunnelMode || routing === 'bypass-cn';
+    const simpleOn = status.tunnelMode || routing !== 'direct';
     const simpleState = !simpleOn ? 'off' : (['checking', 'fail', 'none'].includes(simpleNet) ? simpleNet : 'ok');
     return (
       <div className={`app-window ${theme === 'dark' ? 'dark-theme' : ''}`}>
@@ -1415,7 +1415,7 @@ export default function App() {
           })()}
 
           {/* 连接卡（紧凑）：盾牌图标 + 状态 + 一行上下行速度/节点/延迟，右侧开关 */}
-          <div className="sb-card sb-status sb-compact" title={simpleOn ? (status.tunnelMode ? '模式：TUN 全局' : '模式：智能分流') : undefined}>
+          <div className="sb-card sb-status sb-compact" title={simpleOn ? (status.tunnelMode ? '模式：TUN 全局' : routing === 'bypass-cn' ? '模式：绕过大陆' : '模式：全局代理') : undefined}>
             <div className="sb-shield"><Cloud size={21} strokeWidth={2.1} /></div>
             <div className="sb-status-info">
               <div className={`simple-status-text sb-status-title ${simpleState === 'checking' ? 'checking' : ''}`}>
@@ -1457,7 +1457,7 @@ export default function App() {
               aria-label="连接开关"
               className={['sb-switch', (simpleOn || simpleState === 'checking') ? 'on' : '', simpleState === 'checking' ? 'busy' : ''].filter(Boolean).join(' ')}
               onClick={handleSimpleConnect}
-              title={simpleOn ? '点击断开连接' : '点击开启分流代理（绕过大陆）'}
+              title={simpleOn ? '点击断开连接' : '点击开启全局代理'}
             >
               <span className="sb-switch-thumb" />
             </button>
@@ -2148,13 +2148,6 @@ export default function App() {
               </section>
 
               {/* 关于与更新（纯手动：点「检查更新」才联网，点「立即更新」才下载安装） */}
-              <section className="prefs-section">
-                <h2 className="prefs-section-title">分流规则</h2>
-                <div className="prefs-group">
-                  {prefRow(<Wifi size={16} />, '局域网与私有地址直连', '10.0.0.0/8、172.16.0.0/12、192.168.0.0/16 等私有网段始终不走代理', <span className="prefs-row-desc">始终开启</span>)}
-                  {prefRow(<Shield size={16} />, '拦截广告与跟踪', '命中 geosite:category-ads-all 的域名直接阻断', <span className="prefs-row-desc">始终开启</span>)}
-                </div>
-              </section>
 
               <section className="prefs-section">
                 <h2 className="prefs-section-title">关于</h2>
