@@ -1263,7 +1263,7 @@ export default function App() {
   const tileBars = (d) => d > 0 ? (d < 150 ? 4 : d < 300 ? 3 : d < 600 ? 2 : 1) : 0;
 
   // 四选一的当前模式：点击后立即显示目标（乐观），否则按真实状态（TUN 优先于分流策略）
-  const MODE_ORDER = ['bypass-cn', 'global', 'direct', 'tun'];
+  const MODE_ORDER = ['direct', 'bypass-cn', 'global', 'tun'];
   const actualMode = status.tunnelMode ? 'tun' : (status.routingMode || 'bypass-cn');
   const shownMode = pendingMode || actualMode;
   const modeIndex = Math.max(0, MODE_ORDER.indexOf(shownMode));
@@ -1557,9 +1557,9 @@ export default function App() {
                       style={{ transform: `translateX(calc(${modeIndex} * (100% + 4px)))` }}
                     />
                     {[
+                      { id: 'direct', label: tr('全局直连') },
                       { id: 'bypass-cn', label: tr('绕过大陆') },
                       { id: 'global', label: tr('全局代理') },
-                      { id: 'direct', label: tr('全局直连') },
                       { id: 'tun', label: tr('TUN 模式'), title: tr('虚拟网卡全局接管整机流量（需管理员权限）') },
                     ].map(m => (
                       <button
