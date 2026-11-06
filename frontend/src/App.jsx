@@ -1263,7 +1263,7 @@ export default function App() {
   const tileBars = (d) => d > 0 ? (d < 150 ? 4 : d < 300 ? 3 : d < 600 ? 2 : 1) : 0;
 
   // 四选一的当前模式：点击后立即显示目标（乐观），否则按真实状态（TUN 优先于分流策略）
-  const MODE_ORDER = ['bypass-cn', 'global', 'direct', 'tun'];
+  const MODE_ORDER = ['direct', 'bypass-cn', 'global', 'tun'];
   const actualMode = status.tunnelMode ? 'tun' : (status.routingMode || 'bypass-cn');
   const shownMode = pendingMode || actualMode;
   const modeIndex = Math.max(0, MODE_ORDER.indexOf(shownMode));
@@ -1557,9 +1557,9 @@ export default function App() {
                       style={{ transform: `translateX(calc(${modeIndex} * (100% + 4px)))` }}
                     />
                     {[
+                      { id: 'direct', label: tr('全局直连') },
                       { id: 'bypass-cn', label: tr('绕过大陆') },
                       { id: 'global', label: tr('全局代理') },
-                      { id: 'direct', label: tr('全局直连') },
                       { id: 'tun', label: tr('TUN 模式'), title: tr('虚拟网卡全局接管整机流量（需管理员权限）') },
                     ].map(m => (
                       <button
@@ -1602,10 +1602,6 @@ export default function App() {
       <span className="toggle-track"><span className="toggle-thumb" /></span>
     </label>
   );
-  const settingsTabs = [
-    { id: 'settings', label: tr('常规设置') },
-    { id: 'logs', label: tr('实时日志') },
-  ];
 
   return (
     <div className={`app-window ${theme === 'dark' ? 'dark-theme' : ''}`}>
@@ -1620,13 +1616,6 @@ export default function App() {
         <div className="titlebar-right no-drag">
           <button className="theme-toggle-btn" onClick={handleUiModeToggle} title={tr('切换到简易模式（点击即用）')}>
             <LayoutGrid size={15} />
-          </button>
-          <button
-            className={`theme-toggle-btn ${inSettings ? 'open' : ''}`}
-            onClick={() => setActiveTab(inSettings ? 'dashboard' : 'settings')}
-            title={inSettings ? tr('返回仪表盘') : tr('首选项设置')}
-          >
-            <Settings size={15} />
           </button>
           {renderThemeMenu()}
           <button className="win-caption-btn" onClick={() => WindowMin()} title={tr('最小化')}>
@@ -1643,28 +1632,54 @@ export default function App() {
 
       {/* Main Body */}
       <div className="app-body">
+        {/* 左侧导航栏（Win11 NavigationView） */}
+        <nav className={`nav-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
+          <div className="nav-top-actions">
+            <button
+              className="hamburger-btn"
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              title={tr('展开 / 折叠侧边栏')}
+            >
+              <Menu size={16} />
+            </button>
+            <div className="nav-items-list">
+              {[
+                { id: 'dashboard', icon: <Activity size={17} />, label: tr('仪表盘') },
+                { id: 'servers', icon: <Server size={17} />, label: tr('节点列表') },
+                { id: 'logs', icon: <Terminal size={17} />, label: tr('实时日志') },
+              ].map(it => (
+                <button
+                  key={it.id}
+                  className={`nav-item-btn ${activeTab === it.id ? 'active' : ''}`}
+                  onClick={() => setActiveTab(it.id)}
+                  title={sidebarCollapsed ? it.label : undefined}
+                >
+                  {it.icon}
+                  {!sidebarCollapsed && <span>{it.label}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="nav-footer-area">
+            <button
+              className={`nav-item-btn ${activeTab === 'settings' ? 'active' : ''}`}
+              onClick={() => setActiveTab('settings')}
+              title={sidebarCollapsed ? tr('首选项设置') : undefined}
+            >
+              <Settings size={17} />
+              {!sidebarCollapsed && <span>{tr('首选项设置')}</span>}
+            </button>
+          </div>
+        </nav>
 
         {/* Right Main Content */}
         <main className="content-surface" onScroll={e => { const sc = e.currentTarget.scrollTop > 2; if (sc !== settingsScrolled) setSettingsScrolled(sc); }}>
           {/* 设置页顶栏（吸顶，不随内容滚走）：返回 / 子导航 / 当前页操作 */}
           {inSettings && (
             <div className={`settings-topbar ${settingsScrolled ? 'scrolled' : ''}`}>
-              <button className="settings-back" onClick={() => setActiveTab('dashboard')} title={tr('返回仪表盘')}>
-                <ArrowLeft size={16} />
-              </button>
-              <div className="segmented-control settings-tabs" role="tablist">
-                {settingsTabs.map(t => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={activeTab === t.id}
-                    className={`segment-btn ${activeTab === t.id ? 'active' : ''}`}
-                    onClick={() => setActiveTab(t.id)}
-                  >
-                    {t.label}
-                  </button>
-                ))}
+              <div style={{ minWidth: 0 }}>
+                <h1 className="content-title" style={{ margin: 0 }}>{activeTab === 'logs' ? tr('实时运行日志') : tr('首选项设置')}</h1>
+                <p className="content-subtitle" style={{ margin: '2px 0 0' }}>{activeTab === 'logs' ? tr('查看代理核心的连接追踪、分流判定与警告异常') : tr('配置本地监听端口、内核、DNS 与系统集成')}</p>
               </div>
               <div className="settings-topbar-actions">
                 {activeTab === 'settings' && (
@@ -1886,9 +1901,6 @@ export default function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div className="content-header" style={{ marginBottom: '4px', alignItems: 'center', gap: '16px' }}>
                 <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <button className="win11-btn qp-icon-btn" onClick={() => setActiveTab('dashboard')} title={tr('返回仪表盘')}>
-                    <ArrowLeft size={14} />
-                  </button>
                   <h1 className="content-title" style={{ margin: 0 }}>{tr('节点列表')}</h1>
                   {/* 操作说明收进 ?：悬停（桌面）或点击显示 */}
                   <span className="help-pop" tabIndex={0} aria-label={tr('操作说明')}>
@@ -2084,12 +2096,6 @@ export default function App() {
           {/* TAB 5: LOGS */}
           {activeTab === 'logs' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', height: '100%' }}>
-              <div className="content-header" style={{ marginBottom: 0 }}>
-                <div>
-                  <h1 className="content-title">{tr('实时运行日志')}</h1>
-                  <p className="content-subtitle">{tr('查看代理核心的连接追踪、分流判定与警告异常')}</p>
-                </div>
-              </div>
 
               <div className="win11-card" style={{ flex: 1, padding: '14px', background: 'rgba(15, 15, 15, 0.85)', color: '#eaeaea', fontFamily: 'Consolas, monospace', fontSize: '12px', overflowY: 'auto', borderRadius: '8px', minHeight: '380px' }}>
                 {logs.map(log => (
@@ -2112,10 +2118,6 @@ export default function App() {
           {/* TAB 6: SETTINGS（Win11 设置式分组列表：左图标+说明，右控件） */}
           {activeTab === 'settings' && (
             <div className="prefs">
-              <div className="prefs-header">
-                <h1 className="content-title">{tr('首选项设置')}</h1>
-                <p className="content-subtitle">{tr('配置本地监听端口、内核、DNS 与系统集成')}</p>
-              </div>
 
               <section className="prefs-section">
                 <h2 className="prefs-section-title">{tr('界面')}</h2>

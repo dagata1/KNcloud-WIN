@@ -434,7 +434,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
-  padding: 20px 56px;
+  padding: 20px 28px;
   background: transparent;
 }
 
@@ -1929,8 +1929,8 @@ select.win11-input option {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: -20px -56px 16px;
-  padding: 16px 56px 12px;
+  margin: -20px -28px 16px;
+  padding: 16px 28px 12px;
   background: var(--bg-mica);
   border-bottom: 1px solid transparent;
   transition: border-color 0.15s ease;
