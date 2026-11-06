@@ -1579,6 +1579,7 @@ export default function App() {
   );
 
   const inSettings = activeTab === 'settings' || activeTab === 'logs';
+  const activeNodeObj = nodes.find(n => n.active);
   const prefsDirty = prefsBaseline !== '' && prefSig(settings) !== prefsBaseline;
   // 设置页一行：左侧图标 + 标题/说明（可带错误提示），右侧控件。普通函数而非组件，避免输入框重挂载丢焦点
   const prefRow = (icon, title, desc, control, error) => (
@@ -1635,13 +1636,16 @@ export default function App() {
         {/* 左侧导航栏（Win11 NavigationView） */}
         <nav className={`nav-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
           <div className="nav-top-actions">
-            <button
-              className="hamburger-btn"
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              title={tr('展开 / 折叠侧边栏')}
-            >
-              <Menu size={16} />
-            </button>
+            <div className="nav-brand-row">
+              <button
+                className="hamburger-btn"
+                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                title={tr('展开 / 折叠侧边栏')}
+              >
+                <Menu size={16} />
+              </button>
+              {!sidebarCollapsed && <img className="nav-brand-logo" src={brandLogo} alt="KNcloud" />}
+            </div>
             <div className="nav-items-list">
               {[
                 { id: 'dashboard', icon: <Activity size={17} />, label: tr('仪表盘') },
@@ -1661,6 +1665,39 @@ export default function App() {
             </div>
           </div>
           <div className="nav-footer-area">
+            {/* 连接状态小卡：内核状态 / 模式 / 当前节点 / 实时速度；折叠时只留状态点 */}
+            {sidebarCollapsed ? (
+              <div className={`core-status core-${coreState} nav-status-dot`} title={coreStateLabel}>
+                <span className="core-dot" aria-hidden="true" />
+              </div>
+            ) : (
+              <div className="nav-quick-status" title={tr('上下行仅统计经代理节点的流量')}>
+                <div className={`core-status core-${coreState}`}>
+                  <span className="core-dot" aria-hidden="true" />
+                  <span className="core-label">{coreStateLabel}</span>
+                </div>
+                <div className="quick-status-row">
+                  <span className="qs-label">{tr('模式')}</span>
+                  <span className="qs-val">{heroInfo.title}</span>
+                </div>
+                <div className="quick-status-row">
+                  <span className="qs-label">{tr('节点')}</span>
+                  <span className="qs-val" title={activeNodeObj ? activeNodeObj.name : ''}>
+                    {activeNodeObj ? activeNodeObj.name : tr('未选择节点')}
+                  </span>
+                </div>
+                {activeNodeObj && activeNodeObj.delay > 0 && (
+                  <div className="quick-status-row">
+                    <span className="qs-label">{tr('延迟')}</span>
+                    <span className="qs-val qs-ok">{activeNodeObj.delay} ms</span>
+                  </div>
+                )}
+                <div className="qs-speed">
+                  <span><ArrowUpRight size={12} color="#0078d4" />{status.upSpeed || '0 B/s'}</span>
+                  <span><ArrowDownLeft size={12} color="#10893e" />{status.downSpeed || '0 B/s'}</span>
+                </div>
+              </div>
+            )}
             <button
               className={`nav-item-btn ${activeTab === 'settings' ? 'active' : ''}`}
               onClick={() => setActiveTab('settings')}
@@ -1713,7 +1750,7 @@ export default function App() {
             <div className="dash-fill" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div className="content-header">
                 <div>
-                  <h1 className="content-title" style={{ margin: 0, lineHeight: 0 }}><img src={brandLogo} alt="KNcloud" style={{ height: "30px", width: "auto", display: "block", marginLeft: "-6px" }} /></h1>
+                  <h1 className="content-title" style={{ margin: 0 }}>{tr('仪表盘')}</h1>
                 </div>
                 <div className={`core-status core-${coreState}`}>
                   <span className="core-dot" aria-hidden="true" />
