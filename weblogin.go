@@ -87,11 +87,17 @@ func (a *App) StartWebLogin() (string, error) {
 	sessionID := time.Now().UnixNano()
 	st := &webLoginStatus{state: "waiting"}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/auth/logo.png", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "image/png")
-		w.Header().Set("Cache-Control", "max-age=3600")
-		_, _ = w.Write(webLoginLogo)
-	})
+	serveImg := func(b []byte) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/png")
+			w.Header().Set("Cache-Control", "max-age=3600")
+			_, _ = w.Write(b)
+		}
+	}
+	mux.HandleFunc("/auth/logo.png", serveImg(webLoginLogo))
+	// 授权页与面板一致：用 KNcloud 字标（深浅色各一张）
+	mux.HandleFunc("/auth/brand-black.png", serveImg(webLoginBrandBlack))
+	mux.HandleFunc("/auth/brand-white.png", serveImg(webLoginBrandWhite))
 	mux.HandleFunc("/auth/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
@@ -228,6 +234,12 @@ const webLoginLinger = 60 * time.Second
 //go:embed build/appicon.png
 var webLoginLogo []byte
 
+//go:embed build/auth-logo-black.png
+var webLoginBrandBlack []byte
+
+//go:embed build/auth-logo-white.png
+var webLoginBrandWhite []byte
+
 // webLoginStatus 本轮授权的进度，供落地页轮询：waiting → syncing → ok / error。
 type webLoginStatus struct {
 	mu    sync.Mutex
@@ -273,8 +285,9 @@ body{display:flex;align-items:center;justify-content:center;background:var(--bg)
 font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;padding:24px}
 .card{width:100%;max-width:380px;background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:36px 32px 28px;text-align:center;
 box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.06)}
-.logo{width:64px;height:64px;border-radius:16px;display:block;margin:0 auto 14px}
-.brand{font-size:13px;font-weight:600;letter-spacing:.02em;color:var(--mut);margin-bottom:26px}
+.logo{height:28px;width:auto;display:block;margin:0 auto 28px}
+.logo.w{display:none}
+@media (prefers-color-scheme:dark){.logo.b{display:none}.logo.w{display:block}}
 .icon{width:44px;height:44px;margin:0 auto 16px;display:flex;align-items:center;justify-content:center}
 .spin{width:30px;height:30px;border:3px solid var(--bd);border-top-color:var(--fg);border-radius:50%;animation:r .8s linear infinite}
 @keyframes r{to{transform:rotate(360deg)}}
@@ -286,8 +299,8 @@ p{font-size:14px;line-height:1.6;color:var(--mut);margin:0;word-break:break-word
 .foot{margin-top:26px;padding-top:16px;border-top:1px solid var(--bd);font-size:12px;color:var(--mut)}
 </style></head>
 <body><div class="card {{STATE}}" id="card">
-<img class="logo" src="/auth/logo.png" alt="KNcloud">
-<div class="brand">KNcloud for Windows</div>
+<img class="logo b" src="/auth/brand-black.png" alt="KNcloud">
+<img class="logo w" src="/auth/brand-white.png" alt="KNcloud">
 <div class="icon" id="icon"></div>
 <h1 id="title">{{TITLE}}</h1>
 <p id="msg">{{MSG}}</p>
