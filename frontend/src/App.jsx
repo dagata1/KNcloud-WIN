@@ -92,7 +92,7 @@ let lastMenuPingAt = 0;
 export default function App() {
   // 简易模式内容少，窗口切到紧凑尺寸；普通模式恢复默认大小
   // （全局最小尺寸在 main.go 里放开了到 380x500，这里的目标值在其之上）
-  const WINDOW_SIZE = { simple: { w: 420, h: 505 }, classic: { w: 1120, h: 760 } };
+  const WINDOW_SIZE = { simple: { w: 380, h: 505 }, classic: { w: 1120, h: 760 } };
   // 按屏幕分辨率等比例缩放窗口（只缩小不放大）：以 1920×1040 工作区（1080p 去掉任务栏）为基准，
   // 宽高同一比例缩放保持窗口比例；不超过工作区 92%，不小于全局最小尺寸 380×500。
   // screen.avail* 是 CSS 像素（已除以 DPI 缩放），与 WindowSetSize 的逻辑像素一致。
@@ -1282,7 +1282,7 @@ export default function App() {
   };
   const heroInfo = MODE_INFO[actualMode] || { title: tr('自定义规则'), desc: tr('系统代理 · 按 SSTap 规则文件分流') };
 
-  // 登录页与简洁模式同尺寸（420x640）；登录成功后由模式切换逻辑控制窗口
+  // 登录页与简洁模式同尺寸（380x505）；登录成功后由模式切换逻辑控制窗口
   useEffect(() => {
     if (account && !account.loggedIn) applyWindowSize('simple');
   }, [account && account.loggedIn]);
