@@ -65,6 +65,11 @@ VIAddVersionKey "ProductName"     "${PRODUCT_NAME}"
 !define MUI_ICON "..\icon.ico"
 !define MUI_UNICON "..\icon.ico"
 !define MUI_ABORTWARNING
+; 多语言：启动时弹语言选择（默认按系统语言选中），选择记在注册表里，卸载 / 升级时沿用
+!define MUI_LANGDLL_REGISTRY_ROOT "HKCU"
+!define MUI_LANGDLL_REGISTRY_KEY "Software\KNcloud-WIN"
+!define MUI_LANGDLL_REGISTRY_VALUENAME "InstallerLanguage"
+!define MUI_LANGDLL_ALLLANGUAGES
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_EXE}"
 
 !insertmacro MUI_PAGE_WELCOME
@@ -75,8 +80,18 @@ VIAddVersionKey "ProductName"     "${PRODUCT_NAME}"
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 
-!insertmacro MUI_LANGUAGE "SimpChinese"
 !insertmacro MUI_LANGUAGE "English"
+!insertmacro MUI_LANGUAGE "SimpChinese"
+!insertmacro MUI_RESERVEFILE_LANGDLL
+
+BrandingText "${PRODUCT_NAME} ${VERSION}"
+
+LangString MSG_RUNNING ${LANG_ENGLISH}     "KNcloud is running. Please exit it from the tray icon (right-click → Exit), then click Retry."
+LangString MSG_RUNNING ${LANG_SIMPCHINESE} "KNcloud 正在运行。请先在托盘图标上右键「退出」，然后点「重试」。"
+LangString MSG_NEED_X64 ${LANG_ENGLISH}     "${PRODUCT_NAME} supports 64-bit Windows 10 / 11 only."
+LangString MSG_NEED_X64 ${LANG_SIMPCHINESE} "${PRODUCT_NAME} 只支持 64 位 Windows 10 / 11。"
+LangString MSG_NEED_WIN10 ${LANG_ENGLISH}     "${PRODUCT_NAME} requires Windows 10 or later."
+LangString MSG_NEED_WIN10 ${LANG_SIMPCHINESE} "${PRODUCT_NAME} 需要 Windows 10 或更高版本。"
 
 ; 程序正在运行时文件被占用：提示用户先从托盘退出（不强杀，避免系统代理没被还原）。
 !macro EnsureNotRunning
@@ -93,24 +108,26 @@ VIAddVersionKey "ProductName"     "${PRODUCT_NAME}"
       SetErrorLevel 2
       Quit
     ${EndIf}
-    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "KNcloud 正在运行。请先在托盘图标上右键「退出」，然后点「重试」。$\r$\nKNcloud is running. Please exit it from the tray icon, then click Retry." /SD IDCANCEL IDRETRY +2
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(MSG_RUNNING)" /SD IDCANCEL IDRETRY +2
     Quit
   ${Loop}
 !macroend
 
 Function .onInit
+  !insertmacro MUI_LANGDLL_DISPLAY
   ${IfNot} ${RunningX64}
-    MessageBox MB_OK|MB_ICONSTOP "KNcloud-WIN 只支持 64 位 Windows 10 / 11。"
+    MessageBox MB_OK|MB_ICONSTOP "$(MSG_NEED_X64)"
     Abort
   ${EndIf}
   ${IfNot} ${AtLeastWin10}
-    MessageBox MB_OK|MB_ICONSTOP "KNcloud-WIN 需要 Windows 10 或更高版本。"
+    MessageBox MB_OK|MB_ICONSTOP "$(MSG_NEED_WIN10)"
     Abort
   ${EndIf}
   SetRegView 64
 FunctionEnd
 
 Function un.onInit
+  !insertmacro MUI_UNGETLANGUAGE
   SetRegView 64
 FunctionEnd
 
