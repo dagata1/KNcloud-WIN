@@ -1522,6 +1522,13 @@ func (a *App) SaveSettings(settings AppSettings) error {
 	if needsRestart {
 		a.coreRetryGen.Add(1)
 		a.coreRetrying = false
+		restartAt := time.Now()
+		defer func() {
+			// 排查「保存设置要等很久」：记录持锁重启内核的耗时
+			if d := time.Since(restartAt); d > time.Second {
+				a.addLogInternal("warn", fmt.Sprintf("Core restart for new preferences took %s", d.Round(10*time.Millisecond)))
+			}
+		}()
 		if err := a.startCoreLocked(); err != nil {
 			a.addLogInternal("error", fmt.Sprintf("Failed to restart core with new settings: %v", err))
 			a.handleCoreStartFailureLocked(err, true)
