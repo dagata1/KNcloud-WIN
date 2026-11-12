@@ -94,6 +94,8 @@ export const en = {
   '准备下载…': 'Preparing download…',
   '关闭': 'Close',
   '首选项已成功保存！': 'Preferences saved!',
+  '保存失败：': 'Save failed: ',
+  '保存中…': 'Saving…',
   '绕过大陆': 'Bypass China',
   '系统代理 · 国内网站直连，其余经节点转发': 'System proxy · China sites direct, the rest via node',
   '全局代理': 'Global proxy',
