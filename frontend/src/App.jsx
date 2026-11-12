@@ -1191,7 +1191,17 @@ export default function App() {
   };
   useEffect(() => { refreshAutoStartError(); }, []);
 
+  const [prefsSaving, setPrefsSaving] = useState(false);
   const handleSaveSettings = async () => {
+    if (prefsSaving) return;
+    setPrefsSaving(true);
+    try { await saveSettingsInner(); }
+    catch (e) {
+      // 后端拒绝（如 TUN 运行中改 SOCKS 端口 / DNS）或调用异常：必须提示，不能静默
+      showToast(tr('保存失败：') + trMsg(String((e && e.message) || e || '')), 'error');
+    } finally { setPrefsSaving(false); }
+  };
+  const saveSettingsInner = async () => {
     const wantAutoStart = !!settings.autoStart;
     await SaveSettings(settings);
     const asErr = (await GetAutoStartError().catch(() => '')) || '';
@@ -1694,9 +1704,9 @@ export default function App() {
                     {prefsDirty && (
                       <span className="settings-dirty"><span className="settings-dirty-dot" />{tr('有未保存的更改')}</span>
                     )}
-                    <button className={`win11-btn ${prefsDirty ? 'primary' : ''}`} onClick={handleSaveSettings}>
+                    <button className={`win11-btn ${prefsDirty ? 'primary' : ''}`} onClick={handleSaveSettings} disabled={prefsSaving}>
                       <Check size={14} />
-                      <span>{tr('保存设置')}</span>
+                      <span>{prefsSaving ? tr('保存中…') : tr('保存设置')}</span>
                     </button>
                   </>
                 )}
