@@ -26,6 +26,12 @@ jobs:
         shell: bash
         run: go test ./internal/...
 
+      - name: Unit tests (device registration)
+        shell: bash
+        run: |
+          mkdir -p frontend/dist && touch frontend/dist/.keep
+          go test -count=1 -run 'TestDeviceID|TestGetSubscribe|TestLoginPanel|TestAccountErrToast' .
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
