@@ -30,7 +30,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p frontend/dist && touch frontend/dist/.keep
-          go test -count=1 -run 'TestDeviceID|TestGetSubscribe|TestLoginPanel|TestAccountErrToast' .
+          go test -count=1 -run 'TestDeviceID|TestGetSubscribe|TestLoginPanel|TestAccountErrToast|TestDevicePing' .
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
