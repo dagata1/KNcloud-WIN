@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"v2rayN-win11/internal/bootproxy"
 	"v2rayN-win11/internal/subfetch"
 )
 
@@ -71,6 +72,7 @@ func (a *App) Logout() AccountInfo {
 
 // Login 登录 KNcloud 官网账户：换取 token → 拉取订阅地址与套餐 → 自动导入订阅节点
 func (a *App) Login(email, password string) (AccountInfo, error) {
+	defer a.bootSession()()
 	email = strings.TrimSpace(email)
 	if email == "" || password == "" {
 		return a.GetAccount(), fmt.Errorf("please enter email and password")
@@ -93,6 +95,7 @@ func (a *App) Login(email, password string) (AccountInfo, error) {
 // completeLogin 用已有凭证（auth_data）完成登录：拉取订阅地址与套餐 → 写入账户 → 导入订阅节点。
 // 密码登录与网页授权回传（weblogin.go）共用此入口。
 func (a *App) completeLogin(domain, email, token string) (AccountInfo, error) {
+	defer a.bootSession()()
 	transfer, usedUp, usedDown, expire, planName, subURL, subEmail, err := a.panelGetSubscribe(domain, token)
 	if err != nil {
 		return a.GetAccount(), fmt.Errorf("login succeeded, but failed to fetch subscription: %v", err)
@@ -155,6 +158,7 @@ func (a *App) completeLogin(domain, email, token string) (AccountInfo, error) {
 
 // RefreshAccount 用登录凭证重新拉取套餐流量/到期信息；订阅地址变化时同步更新
 func (a *App) RefreshAccount() (AccountInfo, error) {
+	defer a.bootSession()()
 	a.mu.RLock()
 	loggedIn := a.account.LoggedIn
 	domain := a.account.Domain
@@ -236,23 +240,50 @@ func (a *App) panelClient() (*http.Client, error) {
 }
 
 // withPanelRetry 对网络层失败重试；每次重新取客户端（内核换了端口也能跟上）。
+// 配置了登录引导节点时，第二次尝试改走登录引导代理（官网直连 / 经内核都连不上，例如国内
+// 没有可用节点时）；本次登录 / 刷新流程里已经启用过引导代理则先走它。HTTP 错误、凭证失效不重试。
 func withPanelRetry(a *App, fn func(*http.Client) error) error {
+	plan := panelAttemptPlan(a.bootPort() > 0, bootproxy.Enabled())
 	var err error
-	for i := 0; i < panelAttempts; i++ {
-		if i > 0 {
+	for i, useBoot := range plan {
+		if i > 0 && !useBoot {
 			time.Sleep(panelRetryDelay)
 		}
 		var c *http.Client
-		c, err = a.panelClient()
+		if useBoot {
+			c, err = a.bootClient()
+		} else {
+			c, err = a.panelClient()
+		}
 		if err == nil {
 			err = fn(c)
 		}
 		var ne *panelNetError
 		if err == nil || !errors.As(err, &ne) {
+			if useBoot && err == nil {
+				a.addLogInternal("info", "官网直连不通，已经登录引导节点连上官网")
+			}
 			return err
+		}
+		if useBoot {
+			a.addLogInternal("warn", fmt.Sprintf("登录引导节点也连不上官网：%v", err))
 		}
 	}
 	return err
+}
+
+// panelAttemptPlan 每次尝试是否走登录引导代理（共 panelAttempts 次）。
+func panelAttemptPlan(bootActive, bootEnabled bool) []bool {
+	plan := make([]bool, panelAttempts)
+	for i := range plan {
+		switch {
+		case bootActive:
+			plan[i] = i%2 == 0 // 引导、本地代理、引导…
+		case bootEnabled:
+			plan[i] = i%2 == 1 // 本地代理、引导、本地代理…
+		}
+	}
+	return plan
 }
 
 func (a *App) panelLogin(domain, email, password string) (string, error) {
@@ -406,5 +437,13 @@ func (a *App) SyncNodes() error {
 	if !loggedIn || subID == "" {
 		return fmt.Errorf("not logged into KNcloud account")
 	}
-	return a.refreshSubscription(subID)
+	defer a.bootSession()()
+	err := a.refreshSubscription(subID)
+	if err != nil && a.bootPort() == 0 && bootproxy.Enabled() {
+		// 经本地代理拉不到订阅（例如国内还没有可用节点）：临时经登录引导节点再拉一次
+		if _, berr := a.bootClient(); berr == nil {
+			err = a.refreshSubscription(subID)
+		}
+	}
+	return err
 }
